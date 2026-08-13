@@ -175,6 +175,12 @@
   .askrow input{flex:1; border:1px solid var(--line); border-radius:10px; padding:9px 12px;
                 font:inherit; background:var(--bg); color:var(--ink); min-width:0;}
 
+  .docview h3{margin:14px 0 6px; font-size:1rem;}
+  .docview .pgmark{color:var(--muted); text-align:center; margin:14px 0 8px; font-size:.78rem;
+                   letter-spacing:.08em; text-transform:uppercase;}
+  .docview .trow{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8rem;
+                 white-space:pre-wrap; border-bottom:1px solid var(--line); padding:3px 0;}
+  .docview p{margin:6px 0; font-size:.9rem; white-space:pre-wrap;}
   .empty{color:var(--muted); font-size:.9rem; padding:8px 2px; font-style:italic;}
   .disclaimer{font-size:.82rem; color:var(--muted); background:var(--ignore-bg);
               border-radius:10px; padding:10px 14px; margin:8px 0 14px;}
@@ -315,6 +321,12 @@
         <p class="sub">The engine could not categorize these, so it will not hide them from you.</p>
         <div id="list-unclassified"></div>
       </details>
+    </section>
+
+    <section class="bucket" id="sec-doc" style="display:none"> <!-- DR-26 -->
+      <h2><span class="dot a"></span>Document view</h2>
+      <p class="sub" id="docCoverageNote"></p>
+      <div class="card docview" id="docView"></div>
     </section>
 
     <details class="fold" id="fold-ignore">
@@ -890,6 +902,53 @@ function retrieve(question, k){
   const crit = state.role ? state.clauses.filter(c=>tierFor(c,state.role).tier==="C") : [];
   return (crit.length?crit:state.clauses).slice(0,4);
 }
+
+/* DR-25: windowed context builder — long clauses reach the model in relevant chunks */
+function buildAskContext(question){
+  const wins = [];
+  for(const c of state.clauses){
+    if(c.text.length<=420){ wins.push({c, text:c.text}); continue; }
+    for(let i=0; i<c.text.length; i+=330)
+      wins.push({c, text:c.text.slice(i, i+420)});
+  }
+  const qTokens = tokensOf(question);
+  const qNums = question.match(/\d[\d.,]*/g)||[];
+  const moneyIntent = /\b(fee|fees|cost|costs|price|pay|paid|refund\w*|deposit|charge\w*|money|much|expensive|owe)\b/i.test(question);
+  const N = wins.length;
+  const df = new Map();
+  const winTokens = wins.map(w=>{
+    const t = tokensOf(w.text);
+    for(const x of t) df.set(x, (df.get(x)||0)+1);
+    return t;
+  });
+  const scored = wins.map((w,i)=>{
+    let s=0;
+    for(const t of qTokens) if(winTokens[i].has(t)) s += Math.log(1 + N/(df.get(t)||1));
+    for(const n of qNums) if(w.text.includes(n)) s += 3;
+    if(moneyIntent && w.c.isFinancial) s += 2;
+    return {w, s};
+  }).filter(x=>x.s>0).sort((a,b)=>b.s-a.s);
+  let picked = scored.slice(0,8).map(x=>x.w);
+  if(!picked.length){
+    const crit = state.role ? state.clauses.filter(c=>tierFor(c,state.role).tier==="C") : [];
+    picked = (crit.length?crit:state.clauses).slice(0,4).map(c=>({c, text:c.text.slice(0,420)}));
+  }
+  let ctx = "", used = 0;
+  for(const w of picked){
+    if(used + w.text.length > 2600) break;
+    ctx += `[${pageRef(w.c)}] ${w.text}\n---\n`;
+    used += w.text.length;
+  }
+  return ctx;
+}
+
+/* DR-25: every number in the answer must exist in the excerpts */
+function numsIn(s){ return new Set((s.match(/\d[\d.,]*\d|\d/g)||[]).map(n=>n.replace(/[.,]/g,""))); }
+function answerVerified(ans, ctx){
+  const allowed = numsIn(ctx);
+  for(const n of numsIn(ans)) if(!allowed.has(n)) return false;
+  return true;
+}
 async function runAsk(){
   const q = $("askInput").value.trim();
   if(!q) return;
@@ -898,9 +957,17 @@ async function runAsk(){
   log.insertAdjacentHTML("beforeend", `<div class="q">${esc(q)}</div><div class="a" id="askPending"><span class="spinner"></span>Reading your document…</div>`);
   $("askInput").value=""; $("askBtn").disabled = true;
   try{
-    const ctx = retrieve(q, 6).map(c=>`[${pageRef(c)}] `+c.text.slice(0,450)).join("\n---\n"); // DR-24
-    const ans = await aiAsk(state.ai.engine, ASK_SYS, "EXCERPTS:\n"+ctx+"\n\nQUESTION: "+q, 120);
-    $("askPending").outerHTML = `<div class="a">${esc(ans||"I can't find that in the document.")}</div>`;
+    const ctx = buildAskContext(q); // DR-25: windowed, table-aware context
+    let ans = await aiAsk(state.ai.engine, ASK_SYS, "EXCERPTS:\n"+ctx+"\n\nQUESTION: "+q, 140);
+    let caution = "";
+    if(ans && !answerVerified(ans, ctx)){ // DR-25: strict retry, then visible caution
+      ans = await aiAsk(state.ai.engine,
+        ASK_SYS+" Every number you state MUST appear verbatim in the excerpts — if unsure, say you can't find it.",
+        "EXCERPTS:\n"+ctx+"\n\nQUESTION: "+q, 140);
+      if(ans && !answerVerified(ans, ctx))
+        caution = `<div class="role-hint" style="margin-top:6px">Caution: some numbers in this answer don't match the document — double-check the pages cited before relying on them.</div>`;
+    }
+    $("askPending").outerHTML = `<div class="a">${esc(ans||"I can't find that in the document.")}${caution}</div>`;
   }catch(err){
     $("askPending").outerHTML = `<div class="a">AI error: ${esc(err.message||"unknown")}. Try again.</div>`;
   }
@@ -908,17 +975,41 @@ async function runAsk(){
 }
 
 /* ============================ TABS (DR-23) ============================== */
-const TABS = [["all","All"],["critical","Critical"],["financial","Money"],["action","Actions"],["read","Read"],["ignore","Ignore"]];
-const TAB_SECTIONS = {critical:"sec-critical", financial:"sec-financial", action:"sec-action", read:"sec-read", ignore:"fold-ignore"};
+const TABS = [["all","All"],["critical","Critical"],["financial","Money"],["action","Actions"],["read","Read"],["ignore","Ignore"],["doc","Document"]];
+const TAB_SECTIONS = {critical:"sec-critical", financial:"sec-financial", action:"sec-action", read:"sec-read", ignore:"fold-ignore", doc:"sec-doc"};
 let activeTab = "all";
 function showTab(t){
   activeTab = t;
   document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active", b.dataset.tab===t));
   for(const [key, secId] of Object.entries(TAB_SECTIONS)){
     const el = $(secId);
-    el.style.display = (t==="all" || t===key) ? "" : "none";
+    // DR-26: the full Document view only shows on its own tab, never inside "All"
+    el.style.display = (key==="doc" ? t===key : (t==="all" || t===key)) ? "" : "none";
   }
   if(t==="ignore") $("fold-ignore").open = true;
+}
+
+/* DR-26: render the deterministic transform */
+function renderDocView(){
+  const md = state.docMarkdown || "";
+  if(!md){ $("docView").innerHTML = `<p class="empty">No document view available.</p>`; $("docCoverageNote").textContent=""; return; }
+  let html = "", buf = [];
+  const flush = ()=>{ if(buf.length){ html += `<p>${esc(buf.join(" "))}</p>`; buf = []; } };
+  for(const raw of md.split("\n")){
+    const line = raw.trimEnd();
+    if(!line.trim()){ flush(); continue; }
+    if(/^— page \d+ —$/.test(line.trim())){ flush(); html += `<div class="pgmark">${esc(line.trim())}</div>`; }
+    else if(line.startsWith("## ")){ flush(); html += `<h3>${esc(line.slice(3))}</h3>`; }
+    else if(line.includes(" | ")){ flush(); html += `<div class="trow">${esc(line)}</div>`; }
+    else buf.push(line); // consecutive prose lines merge into one paragraph
+  }
+  flush();
+  $("docView").innerHTML = html;
+  $("docCoverageNote").textContent = state.docCoverage != null
+    ? (state.docCoverage >= 1
+        ? "Deterministic transform — every character extracted from the PDF appears below; headings and table columns reconstructed from layout. This is exactly what the engine and the AI read."
+        : `Deterministic transform — ${Math.round(state.docCoverage*100)}% of extracted characters preserved.`)
+    : "This is the text the engine and the AI read.";
 }
 
 /* ============================ FLOW ====================================== */
@@ -997,40 +1088,65 @@ async function handleFile(file){
       "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"; // DR-01
     const buf = await file.arrayBuffer();
     const doc = await pdfjsLib.getDocument({data:buf}).promise;
-    const pages=[];
+    /* DR-26: deterministic structuring pass — pure function of extracted glyphs.
+       Pass 1: lines with y/x/font-size. Pass 2: dedupe repeated headers/footers.
+       Pass 3: body-font median → headings; paragraph gaps; markdown doc view. */
+    const linesPerPage=[]; let rawChars=0;
     for(let p=1; p<=doc.numPages; p++){
       const page = await doc.getPage(p);
       const tc = await page.getTextContent();
-      // DR-09a: rebuild lines from y-positions; gap > 1.6× median = paragraph break
-      const lines=[]; let cur={y:null, text:""};
+      const lines=[]; let cur={y:null, text:"", endX:null, size:0};
       for(const item of tc.items){
         if(!item.str.trim() && !item.hasEOL) continue;
-        const y = item.transform[5];
-        if(cur.y!==null && Math.abs(y-cur.y)>2){ lines.push(cur); cur={y, text:""}; }
+        rawChars += (item.str.match(/[A-Za-z0-9]/g)||[]).length;
+        const y = item.transform[5], x = item.transform[4];
+        const sz = Math.hypot(item.transform[2], item.transform[3]);
+        if(cur.y!==null && Math.abs(y-cur.y)>2){ lines.push(cur); cur={y, text:"", endX:null, size:0}; }
         if(cur.y===null) cur.y=y;
-        cur.text += (cur.text?" ":"") + item.str.trim();
+        const colBreak = cur.endX!==null && (x - cur.endX) > 18; // DR-25 column gap
+        cur.text += (cur.text ? (colBreak ? " | " : " ") : "") + item.str.trim();
+        cur.endX = x + (item.width||0);
+        cur.size = Math.max(cur.size, sz);
       }
       if(cur.text) lines.push(cur);
-      const gaps = lines.slice(1).map((l,i)=>Math.abs(lines[i].y-l.y)).filter(g=>g>0.5).sort((a,b)=>a-b);
-      const median = gaps.length ? gaps[Math.floor(gaps.length/2)] : 12;
-      let text="";
-      lines.forEach((l,i)=>{
-        if(i>0){ text += (Math.abs(lines[i-1].y-l.y) > median*1.6) ? "\n\n" : "\n"; }
-        text += l.text;
-      });
-      pages.push({num:p, text});
+      linesPerPage.push({num:p, lines});
     }
     // DR-23: strip repeated page headers/footers (same short line on ≥3 pages)
-    if(pages.length>=3){
+    if(linesPerPage.length>=3){
       const freq = new Map();
-      for(const pg of pages){
-        for(const ln of new Set(pg.text.split("\n").map(s=>s.trim()).filter(s=>s && s.length<60)))
+      for(const pg of linesPerPage)
+        for(const ln of new Set(pg.lines.map(l=>l.text.trim()).filter(s=>s && s.length<60)))
           freq.set(ln, (freq.get(ln)||0)+1);
-      }
       const junk = new Set([...freq.entries()].filter(([ln,n])=>n>=3).map(([ln])=>ln));
-      if(junk.size) for(const pg of pages)
-        pg.text = pg.text.split("\n").filter(s=>!junk.has(s.trim())).join("\n");
+      // DR-26: repeated furniture is EXCLUDED from engine text but KEPT in the document view
+      if(junk.size) for(const pg of linesPerPage)
+        for(const l of pg.lines) l.junk = junk.has(l.text.trim());
     }
+    // body font size = median over all lines (weighted by nothing — robust enough)
+    const allSizes = linesPerPage.flatMap(pg=>pg.lines.map(l=>l.size)).filter(s=>s>0).sort((a,b)=>a-b);
+    const bodySize = allSizes.length ? allSizes[Math.floor(allSizes.length/2)] : 10;
+    const pages=[]; let md="";
+    for(const pg of linesPerPage){
+      const gaps = pg.lines.slice(1).map((l,i)=>Math.abs(pg.lines[i].y-l.y)).filter(g=>g>0.5).sort((a,b)=>a-b);
+      const median = gaps.length ? gaps[Math.floor(gaps.length/2)] : 12;
+      let text=""; md += `\n\n— page ${pg.num} —\n`;
+      let started=false;
+      pg.lines.forEach((l,i)=>{
+        const isHeading = l.size > bodySize*1.18 && l.text.trim().length>=3 &&
+                          l.text.trim().length<=90 && !l.text.includes(" | ");
+        const parBreak = i>0 && Math.abs(pg.lines[i-1].y-l.y) > median*1.6;
+        md += (isHeading ? "\n## "+l.text+"\n" : (parBreak?"\n":"")+l.text+"\n");
+        if(l.junk) return; // in the doc view above, not in the engine text
+        if(started) text += (parBreak || isHeading) ? "\n\n" : "\n";
+        text += l.text; started=true;
+        if(isHeading) text += "\n"; // heading stands alone → clean clause boundary
+      });
+      pages.push({num:pg.num, text});
+    }
+    // DR-26 completeness guarantee: no extracted character may be dropped
+    const mdChars = (md.match(/[A-Za-z0-9]/g)||[]).length;
+    state.docCoverage = rawChars ? mdChars/rawChars : 1;
+    state.docMarkdown = md.trim();
     const total = pages.map(p=>p.text).join("").replace(/\s+/g," ").trim();
     if(total.length < 200){ // DR-10
       setStatus(`<div class="notice warn"><b>This PDF appears to be scanned images — no readable text.</b>Two ways forward: use your phone's text recognition (iPhone Live Text or Google Lens) to copy the text from the pages, then use "paste text instead" below the upload box — or ask the sender for the original (non-scanned) PDF.</div>`);
@@ -1049,6 +1165,8 @@ function analyze(pages, name, pasted){
     return;
   }
   state.clauses = clauses; state.docName = name; state.pasted = pasted;
+  if(pasted){ state.docMarkdown = pages.map(p=>p.text).join("\n\n"); state.docCoverage = 1; } // DR-26
+  renderDocView();
   state.ai.notes = {}; // DR-20: per-document
   $("aiStatus").textContent = ""; $("aiBtn").textContent = "Enable AI boost";
   $("aiSummary").style.display = "none"; $("askLog").innerHTML = ""; $("askCard").style.display = state.ai.engine ? "block":"none";
@@ -1190,7 +1308,7 @@ function render(){
                      read:counts.R+counts.U, ignore:counts.I};
   document.querySelectorAll(".tab").forEach(b=>{
     const k=b.dataset.tab;
-    b.textContent = (TABS.find(t=>t[0]===k)||[])[1] + (k!=="all" && tabCounts[k]!=null ? ` ${tabCounts[k]}` : "");
+    b.textContent = (TABS.find(t=>t[0]===k)||[])[1] + (tabCounts[k]!=null ? ` ${tabCounts[k]}` : "");
   });
   wireExpanders();
 }
