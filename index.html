@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>What Matters? — role-based PDF contract triage</title>
+<!-- DR-01: single-file app, pdf.js 3.11.174 from cdnjs, no storage APIs, no server -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1a2233; --muted:#5b6478;
+    --critical:#c62838; --critical-bg:#fdeef0; --read:#a05a00; --read-bg:#fdf3e3;
+    --ignore:#5b6478; --ignore-bg:#eef0f4; --accent:#2450a4; --accent-bg:#e9effb;
+    --money:#0c6b4d; --money-bg:#e6f5ef; --line:#e3e6ec; --radius:12px;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       background:var(--bg); color:var(--ink); line-height:1.5;}
+  .wrap{max-width:880px; margin:0 auto; padding:20px 16px 80px;}
+  header h1{font-size:1.9rem; letter-spacing:-.02em;}
+  header .tag{color:var(--muted); margin:4px 0 18px; font-size:1rem;}
+
+  .card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+        padding:18px; margin-bottom:16px;}
+  .card h2{font-size:1.05rem; margin-bottom:10px;}
+  .step-num{display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;
+            border-radius:50%; background:var(--accent); color:#fff; font-size:.8rem; margin-right:8px;}
+
+  /* Upload zone */
+  #dropzone{border:2px dashed #b9c2d4; border-radius:var(--radius); padding:26px 16px; text-align:center;
+            cursor:pointer; transition:background .15s,border-color .15s;}
+  #dropzone.drag{background:var(--accent-bg); border-color:var(--accent);}
+  #dropzone p{color:var(--muted); font-size:.92rem;}
+  #dropzone .big{color:var(--ink); font-size:1rem; font-weight:600; margin-bottom:4px;}
+  .alt-row{display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;}
+  button{font:inherit; cursor:pointer; border-radius:9px; border:1px solid var(--line);
+         background:#fff; padding:9px 14px;}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600;}
+  button.linkish{border:none; background:none; color:var(--accent); text-decoration:underline; padding:6px 2px;}
+  button:disabled{opacity:.45; cursor:not-allowed;}
+  #pasteBox{display:none; margin-top:12px;}
+  #pasteBox textarea{width:100%; min-height:140px; border:1px solid var(--line); border-radius:9px;
+                     padding:10px; font:inherit; font-size:.9rem;}
+
+  /* Role picker — DR-02: exactly 8 roles */
+  .roles{display:flex; flex-wrap:wrap; gap:8px;}
+  .role-chip{border:1.5px solid var(--line); border-radius:999px; padding:8px 16px; background:#fff;
+             font-size:.95rem; transition:all .12s;}
+  .role-chip[aria-pressed="true"]{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600;}
+  .role-hint{color:var(--muted); font-size:.85rem; margin-top:8px;}
+  .attention{animation:pulse 1s ease 2; border-color:var(--critical) !important;}
+  @keyframes pulse{0%,100%{box-shadow:none}50%{box-shadow:0 0 0 4px var(--critical-bg)}}
+
+  /* Status / errors */
+  #status{display:none; margin-bottom:16px;}
+  .notice{border-left:4px solid var(--accent); background:var(--accent-bg); padding:12px 14px;
+          border-radius:0 9px 9px 0; font-size:.92rem;}
+  .notice.warn{border-color:var(--read); background:var(--read-bg);}
+  .notice.error{border-color:var(--critical); background:var(--critical-bg);}
+  .notice b{display:block; margin-bottom:2px;}
+  .spinner{display:inline-block; width:14px; height:14px; border:2px solid var(--accent);
+           border-top-color:transparent; border-radius:50%; animation:spin .8s linear infinite;
+           vertical-align:-2px; margin-right:8px;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* Results */
+  #results{display:none;}
+  #summaryBar{position:sticky; top:0; z-index:5; background:var(--card); border:1px solid var(--line);
+              border-radius:var(--radius); padding:10px 14px; margin-bottom:16px;
+              display:flex; align-items:center; gap:10px; flex-wrap:wrap; box-shadow:0 2px 10px rgba(20,30,60,.06);}
+  #summaryBar .counts{display:flex; gap:8px; flex-wrap:wrap; font-size:.85rem;}
+  .pill{border-radius:999px; padding:3px 10px; font-weight:600;}
+  .pill.c{background:var(--critical-bg); color:var(--critical);}
+  .pill.r{background:var(--read-bg); color:var(--read);}
+  .pill.i{background:var(--ignore-bg); color:var(--ignore);}
+  #summaryBar select{font:inherit; padding:6px 8px; border-radius:8px; border:1px solid var(--line); margin-left:auto;}
+  .docname{font-size:.85rem; color:var(--muted); width:100%;}
+
+  section.bucket{margin-bottom:22px;}
+  section.bucket>h2{font-size:1.15rem; margin-bottom:4px; display:flex; align-items:center; gap:8px;}
+  section.bucket>p.sub{color:var(--muted); font-size:.88rem; margin-bottom:10px;}
+  .dot{width:10px; height:10px; border-radius:50%; display:inline-block;}
+  .dot.c{background:var(--critical);} .dot.r{background:var(--read);} .dot.i{background:var(--ignore);}
+  .dot.f{background:var(--money);} .dot.a{background:var(--accent);}
+
+  .clause{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+          padding:14px 16px; margin-bottom:10px;}
+  .clause.c{border-left:4px solid var(--critical);}
+  .clause.r{border-left:4px solid var(--read);}
+  .clause.i{border-left:4px solid var(--ignore); opacity:.85;}
+  .clause .top{display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:6px;}
+  .chip{font-size:.72rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+        border-radius:6px; padding:2px 8px;}
+  .chip.c{background:var(--critical-bg); color:var(--critical);}
+  .chip.r{background:var(--read-bg); color:var(--read);}
+  .chip.i{background:var(--ignore-bg); color:var(--ignore);}
+  .chip.f{background:var(--money-bg); color:var(--money);}
+  .chip.a{background:var(--accent-bg); color:var(--accent);}
+  .cat{font-size:.8rem; color:var(--muted); border:1px solid var(--line); border-radius:6px; padding:1px 7px;}
+  .page{margin-left:auto; font-size:.78rem; color:var(--muted); white-space:nowrap;}
+  .why{font-size:.88rem; color:var(--ink); margin-bottom:6px; font-weight:600;}
+  .excerpt{font-size:.88rem; color:var(--muted); white-space:pre-wrap;}
+  .excerpt .more{color:var(--accent); cursor:pointer; text-decoration:underline; font-size:.82rem;}
+  .ainote{margin-top:8px; font-size:.88rem; background:var(--accent-bg); border-radius:8px;
+          padding:8px 10px;}
+  .ainote .chip{vertical-align:1px; margin-right:4px;}
+  .amounts{margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;}
+  .amt{background:var(--money-bg); color:var(--money); font-weight:700; border-radius:6px;
+       padding:2px 8px; font-size:.85rem;}
+
+  /* Action checklist */
+  .todo{display:flex; gap:10px; align-items:flex-start; background:var(--card); border:1px solid var(--line);
+        border-radius:var(--radius); padding:12px 14px; margin-bottom:8px;}
+  .todo input{margin-top:4px; width:16px; height:16px; accent-color:var(--accent);}
+  .todo label{font-size:.9rem;}
+  .todo label b{color:var(--accent);}
+  .todo .page{margin-left:0; display:block; margin-top:2px;}
+  .todo.done label{text-decoration:line-through; color:var(--muted);}
+
+  details.fold{margin-bottom:22px;}
+  details.fold>summary{cursor:pointer; font-size:1.05rem; font-weight:600; padding:10px 0;
+                       display:flex; align-items:center; gap:8px; list-style:none;}
+  details.fold>summary::before{content:"▸"; transition:transform .15s;}
+  details.fold[open]>summary::before{transform:rotate(90deg);}
+  details.fold>summary .count{color:var(--muted); font-weight:400; font-size:.85rem;}
+
+  .empty{color:var(--muted); font-size:.9rem; padding:8px 2px; font-style:italic;}
+  .disclaimer{font-size:.82rem; color:var(--muted); background:var(--ignore-bg);
+              border-radius:9px; padding:10px 14px; margin:8px 0 18px;}
+  footer{margin-top:30px; border-top:1px solid var(--line); padding-top:14px;}
+  #startOver{margin-bottom:14px;}
+  @media (max-width:700px){ /* DR-15 */
+    .wrap{padding:14px 10px 60px;}
+    header h1{font-size:1.5rem;}
+    #summaryBar select{margin-left:0; width:100%;}
+    .page{width:100%; margin-left:0;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>What Matters?</h1>
+    <p class="tag">Upload a contract, lease, offer, or terms document. Pick who you are. See only what can affect <em>your</em> decision.</p>
+  </header>
+
+  <!-- STEP 1: document -->
+  <div class="card" id="uploadCard">
+    <h2><span class="step-num">1</span>Add your document</h2>
+    <div id="dropzone" role="button" tabindex="0" aria-label="Upload a PDF">
+      <p class="big">Drop a PDF here or tap to choose</p>
+      <p>Works with text PDFs (contracts, leases, offers, terms &amp; conditions)</p>
+    </div>
+    <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden>
+    <div class="alt-row">
+      <button id="pasteToggle" class="linkish">…or paste text instead</button>
+      <button id="demoBtn" class="linkish">Try the demo lease</button> <!-- DR-12 -->
+    </div>
+    <div id="pasteBox">
+      <textarea id="pasteArea" placeholder="Paste the document text here…"></textarea>
+      <div class="alt-row"><button class="primary" id="analyzePaste">Analyze pasted text</button></div>
+    </div>
+  </div>
+
+  <!-- STEP 2: role — DR-02 -->
+  <div class="card" id="roleCard">
+    <h2><span class="step-num">2</span>Who are you in this document?</h2>
+    <div class="roles" id="rolePicker"></div>
+    <p class="role-hint">Your role decides what is critical, what to read, and what you can safely skip. You can switch roles later without re-uploading.</p>
+  </div>
+
+  <div id="status"></div>
+
+  <!-- RESULTS -->
+  <div id="results">
+    <button id="startOver">← Analyze another document</button>
+    <div class="disclaimer" id="topDisclaimer"></div> <!-- DR-14 -->
+    <!-- DR-20: on-device AI boost -->
+    <div class="card" id="aiCard" style="display:none">
+      <h2>On-device AI boost <span class="chip a">free · private</span></h2>
+      <p class="sub" style="color:var(--muted);font-size:.88rem;margin-bottom:10px">
+        Runs a small AI model inside your browser — nothing is uploaded anywhere. One-time download
+        (~350&nbsp;MB — use Wi-Fi, then it's cached for offline use). It classifies clauses the rules engine
+        missed and adds plain-language notes to your critical clauses. Takes a minute or two on a phone.</p>
+      <div class="alt-row"><button class="primary" id="aiBtn">Enable AI boost</button></div>
+      <div id="aiProg" style="display:none;margin-top:10px">
+        <div style="height:8px;background:var(--ignore-bg);border-radius:99px;overflow:hidden">
+          <div id="aiProgBar" style="height:100%;width:0%;background:var(--accent);transition:width .3s"></div>
+        </div>
+        <p class="role-hint" id="aiProgText">Preparing…</p>
+      </div>
+      <p class="role-hint" id="aiStatus"></p>
+    </div>
+    <div id="summaryBar">
+      <span class="docname" id="docName"></span>
+      <span class="counts" id="countPills"></span>
+      <select id="roleSwitch" aria-label="Switch role"></select> <!-- DR-13 instant re-filter -->
+    </div>
+    <div id="langBanner"></div> <!-- DR-11 -->
+
+    <section class="bucket" id="sec-critical">
+      <h2><span class="dot c"></span>Critical for you</h2>
+      <p class="sub">Clauses that can cost you money or rights in this role. Read every one.</p>
+      <div id="list-critical"></div>
+    </section>
+
+    <section class="bucket" id="sec-financial"> <!-- DR-07 -->
+      <h2><span class="dot f"></span>Financial impact</h2>
+      <p class="sub">Every amount, fee, and percentage found — and the clause it lives in.</p>
+      <div id="list-financial"></div>
+    </section>
+
+    <section class="bucket" id="sec-action"> <!-- DR-08 -->
+      <h2><span class="dot a"></span>Action required</h2>
+      <p class="sub">Obligations and deadlines. Tick them off as you handle them (list is not saved after you close the page).</p>
+      <div id="list-action"></div>
+    </section>
+
+    <section class="bucket" id="sec-read">
+      <h2><span class="dot r"></span>Must read</h2>
+      <p class="sub">Relevant to your decision, but not typically dangerous.</p>
+      <div id="list-read"></div>
+      <details class="fold" id="fold-unclassified"> <!-- DR-03 safety rule -->
+        <summary>Unclassified — skim these <span class="count" id="count-unclassified"></span></summary>
+        <p class="sub">The engine could not categorize these, so it will not hide them from you.</p>
+        <div id="list-unclassified"></div>
+      </details>
+    </section>
+
+    <details class="fold" id="fold-ignore">
+      <summary><span class="dot i"></span>&nbsp;Can ignore <span class="count" id="count-ignore"></span></summary>
+      <p class="sub">Boilerplate or clauses that concern the other side, not you.</p>
+      <div id="list-ignore"></div>
+    </details>
+  </div>
+
+  <footer><div class="disclaimer" id="footDisclaimer"></div></footer>
+</div>
+
+<script>
+"use strict";
+/* ================================ ENGINE ================================ */
+
+/* DR-02: the 8 roles */
+const ROLES = [
+  {id:"BUY", label:"Buyer"}, {id:"SEL", label:"Seller"},
+  {id:"TEN", label:"Tenant"}, {id:"LAN", label:"Landlord"},
+  {id:"EMP", label:"Employee"}, {id:"EMR", label:"Employer"},
+  {id:"INV", label:"Investor"}, {id:"CUS", label:"Customer"}
+];
+
+/* DR-14: exact disclaimer text */
+const DISCLAIMER = "Automated pattern matching, not legal advice. This tool highlights common clause types — it can miss or mislabel clauses. Read anything important yourself and consult a professional for real decisions.";
+
+/* DR-04: clause taxonomy — category id, label, detection regex, DR-06 why-line.
+   DR-05: tiers per role in column order BUY,SEL,TEN,LAN,EMP,EMR,INV,CUS (C/R/I). */
+const CATEGORIES = [
+ {id:"payment", label:"Payment terms",
+  re:/\b(rent|salary|purchase price|price|fees?|payable|compensation|invoice|per month|per annum)\b/i,
+  why:"This sets what is paid, when, and how — the core number of the deal.",
+  tiers:"CCCCCCCC"},
+ {id:"deposit", label:"Deposit / down payment",
+  re:/\b(security deposit|deposit|earnest money|down payment)\b/i,
+  why:"Money handed over up front — and the conditions for getting it back.",
+  tiers:"CRCCIIRR"},
+ {id:"termination", label:"Termination",
+  re:/\b(terminat(?:e|es|ed|ion)|cancell?(?:ation)?|end (?:of )?this (?:agreement|lease|contract))\b/i,
+  why:"How this deal ends — who can end it, when, and what it costs to leave.",
+  tiers:"CCCCCCRR"},
+ {id:"renewal", label:"Auto-renewal",
+  re:/\b(automatic(?:ally)? renew\w*|evergreen|renewal term|renews? for successive)\b/i,
+  why:"The deal may continue by itself unless you act in time.",
+  tiers:"RICRIIIC"},
+ {id:"notice", label:"Notice periods",
+  re:/\b((?:\d+|seven|ten|fourteen|fifteen|twenty|thirty|forty[- ]five|sixty|ninety)\s*(?:\(\d+\)\s*)?(?:calendar\s*|business\s*)?days'?\s*(?:prior\s*)?(?:written\s*)?notice|months'?\s*notice|notice period)\b/i,
+  why:"Missing a notice window can lock you in or cost you money.",
+  tiers:"RRCCCCIR"},
+ {id:"penalty", label:"Late fees & penalties",
+  re:/\b(late (?:fee|charge|payment)|penalt(?:y|ies)|interest (?:on|for) (?:overdue|late|arrears)|liquidated damages)\b/i,
+  why:"Extra money you owe when something is late or breached.",
+  tiers:"CRCRIIRC"},
+ {id:"liability", label:"Limitation of liability",
+  re:/\b(limitation of liability|(?:shall|will) not be liable|liability (?:is |shall be )?(?:limited|capped)|no liability|consequential damages)\b/i,
+  why:"Caps or removes what you can recover if things go wrong.",
+  tiers:"CRRRIRCC"},
+ {id:"indemnity", label:"Indemnification",
+  re:/\b(indemnif(?:y|ies|ication)|hold (?:\w+\s+)?harmless|defend (?:\w+\s+)?against (?:any )?claims?)\b/i,
+  why:"You may have to pay for the other side's legal problems.",
+  tiers:"CCRRICCR"},
+ {id:"warranty", label:"Warranty & \"as is\"",
+  re:/\b(as[- ]is|no warrant(?:y|ies)|disclaims? (?:all )?warrant\w*|merchantability|fitness for a particular purpose)\b/i,
+  why:"Limits what you can claim if the thing you're getting is defective.",
+  tiers:"CRIIIIRC"},
+ {id:"maintenance", label:"Maintenance & repairs",
+  re:/\b(maintenance|repairs?|keep .{0,30}good (?:condition|repair)|wear and tear)\b/i,
+  why:"Who fixes what, and who pays for it.",
+  tiers:"RICCIIII"},
+ {id:"insurance", label:"Insurance",
+  re:/\b(insurance|insured?|policy of insurance|coverage of not less than)\b/i,
+  why:"Insurance you must buy or maintain — a recurring hidden cost.",
+  tiers:"RRRCIRRI"},
+ {id:"covenants", label:"Non-compete / non-solicit",
+  re:/\b(non[- ]?compete|shall not .{0,40}compete|non[- ]?solicit\w*|restraint of trade|restrictive covenant)\b/i,
+  why:"Limits what work you can do or who you can approach after this deal.",
+  tiers:"IRIICCRI"},
+ {id:"ip", label:"IP assignment",
+  re:/\b(intellectual property|work product|inventions?|assign(?:s|ment)? .{0,30}(?:rights|copyright|ip)\b|copyright)\b/i,
+  why:"Decides who owns what gets created.",
+  tiers:"RRIICCRI"},
+ {id:"confidential", label:"Confidentiality",
+  re:/\b(confidential(?:ity)?|non[- ]?disclosure|trade secrets?)\b/i,
+  why:"What you must keep secret, and for how long.",
+  tiers:"RRIIRRRI"},
+ {id:"disputes", label:"Dispute resolution",
+  re:/\b(arbitration|class action waiver|mediation|exclusive jurisdiction|courts? of|litigation)\b/i,
+  why:"Where and how you're allowed to fight back — arbitration clauses often remove your right to sue.",
+  tiers:"RRRRRRRC"},
+ {id:"law", label:"Governing law",
+  re:/\b(governing law|governed by the laws)\b/i,
+  why:"Which country's or state's rules apply.",
+  tiers:"IIIIIIRI"},
+ {id:"forcemajeure", label:"Force majeure",
+  re:/\b(force majeure|acts? of god|beyond (?:its |the |their )?reasonable control)\b/i,
+  why:"When the other side is excused for not delivering.",
+  tiers:"RRIIIIRI"},
+ {id:"assignment", label:"Assignment / sublet",
+  re:/\b(assignment|assigns? (?:this|its|his|her|their)|sublets?|subleas(?:e|ing)|transfer (?:of )?(?:its |their )?(?:rights|obligations))\b/i,
+  why:"Whether you (or they) can hand this deal to someone else.",
+  tiers:"RRCCIIRI"},
+ {id:"changes", label:"Unilateral changes",
+  re:/\b((?:we|company|landlord|seller) (?:may|reserves? the right to) .{0,30}(?:change|modify|amend)|at (?:its|our) sole discretion|from time to time modify)\b/i,
+  why:"The other side can rewrite the rules after you sign.",
+  tiers:"CICRRIRC"},
+ {id:"privacy", label:"Data & privacy",
+  re:/\b(personal (?:data|information)|privacy|data protection|GDPR)\b/i,
+  why:"What they collect about you and what they do with it.",
+  tiers:"IIIIRRIC"},
+ {id:"benefits", label:"Probation & benefits",
+  re:/\b(probation(?:ary)?|benefits|vacation|paid leave|sick leave|pension|holiday entitlement)\b/i,
+  why:"Your safety net: trial period, leave, and what you get beyond salary.",
+  tiers:"IIIICCII"},
+ {id:"equity", label:"Equity & vesting",
+  re:/\b(shares?|equity|vesting|stock options?|dilution|dividends?)\b/i,
+  why:"Ownership stakes: how much, when it's really yours, and how it can shrink.",
+  tiers:"RRIICRCI"},
+ {id:"boilerplate", label:"Boilerplate",
+  re:/\b(severability|entire agreement|counterparts|headings (?:are|shall)|waiver of .{0,20}breach|successors and assigns|shall survive|notices? (?:shall|must) be in writing|no partnership)\b/i,
+  why:"Standard legal plumbing — rarely decision-relevant.",
+  tiers:"IIIIIIII"},
+ /* DR-17: Engine v2 categories (scope revision v1.1) */
+ {id:"interest", label:"Interest rate",
+  re:/\b(interest rate|rate of interest|APR\b|annual percentage rate|interest (?:shall |will )?accrues?|%\s?per (?:annum|month)|percent per (?:annum|month))\b/i,
+  why:"The real cost of the money over time.",
+  tiers:"CRRRIICC"},
+ {id:"collateral", label:"Collateral & guarantees",
+  re:/\b(collateral|security interest|liens?\b|pledged?|mortgages?|guarantor|personal guarantee|surety)\b/i,
+  why:"What can be taken — or who else is on the hook — if payment fails.",
+  tiers:"CRRRIICC"},
+ {id:"default", label:"Default & acceleration",
+  re:/\b(events? of default|acceleration|immediately due and payable|cure period|material breach of this (?:agreement|lease|contract)|remedies (?:of|available))\b/i,
+  why:"What counts as breaking the deal, and how fast the hammer falls.",
+  tiers:"CCRRIRCC"},
+ {id:"title", label:"Title & risk of loss",
+  re:/\b(title (?:to|shall pass|passes)|good and marketable title|risk of loss|ownership (?:of the .{0,30})?(?:passes|shall pass|transfers)|free (?:and clear )?of (?:all )?(?:liens|encumbrances))\b/i,
+  why:"When the thing actually becomes yours — and who bears loss until then.",
+  tiers:"CCIIIIRR"},
+ {id:"contingency", label:"Contingencies",
+  re:/\b(contingent upon|contingenc(?:y|ies)|subject to (?:financing|inspection|appraisal|satisfactory)|due diligence|conditions? precedent)\b/i,
+  why:"Escape hatches — conditions that let a party walk away.",
+  tiers:"CCIIIICI"},
+ {id:"delivery", label:"Closing & delivery",
+  re:/\b(closing date|closing shall|completion date|deliver(?:y|ed|able)?\b|shipment|possession (?:shall|will) (?:be|pass|transfer))\b/i,
+  why:"When and how you actually get what was promised.",
+  tiers:"CCRRIIRC"},
+ {id:"refunds", label:"Returns & refunds",
+  re:/\b(refunds?|return policy|no returns|exchanges? (?:are|will)|restocking fee|money[- ]?back|non[- ]?refundable)\b/i,
+  why:"Whether money paid can come back.",
+  tiers:"CRIIIIIC"},
+ {id:"billing", label:"Subscription & billing",
+  re:/\b(subscription|recurring (?:charge|payment|billing|fee)|billed (?:monthly|annually|automatically)|free trial|billing cycle|payment method on file|auto[- ]?charged?)\b/i,
+  why:"Recurring charges — the cost that keeps arriving.",
+  tiers:"RIIIIIIC"},
+ {id:"suspension", label:"Account suspension",
+  re:/\b(suspend (?:your|the) account|terminate (?:your|the) account|refuse (?:service|access)|remove (?:your )?content|permanently ban)\b/i,
+  why:"They can cut you off — check for what reasons and with what notice.",
+  tiers:"IRIIIIIC"},
+ {id:"contentlicense", label:"License to your content",
+  re:/\b(you grant|user content|license to (?:use|host|reproduce)|royalty[- ]?free.{0,30}license|perpetual.{0,20}license)\b/i,
+  why:"Rights you hand over to what you create or upload.",
+  tiers:"IRIIIIIC"},
+ {id:"exclusions", label:"Coverage exclusions",
+  re:/\b(exclusions?\b|not covered|no coverage|coverage does not|does not cover|excluded from (?:coverage|this))\b/i,
+  why:"The gaps — what you may think is covered but is not.",
+  tiers:"CRIIIIRC"},
+ {id:"severance", label:"Severance",
+  re:/\b(severance|redundancy|payment in lieu of notice|garden leave)\b/i,
+  why:"What you get (or owe) when the job ends.",
+  tiers:"IIIICCII"},
+ {id:"atwill", label:"At-will employment",
+  re:/\b(at[- ]?will employment|employment (?:is )?at[- ]?will|for any reason or no reason|with or without cause)\b/i,
+  why:"Either side can end it anytime — job security is limited.",
+  tiers:"IIIICRII"},
+ {id:"hours", label:"Hours & overtime",
+  re:/\b(working hours|hours of work|overtime|on[- ]?call|work ?week|shift work)\b/i,
+  why:"How much of your time is really committed.",
+  tiers:"IIIICRII"},
+ {id:"commission", label:"Commission & bonus",
+  re:/\b(commissions?\b|bonus(?:es)?\b|incentive (?:plan|compensation|pay)|quotas?\b|on[- ]?target earnings)\b/i,
+  why:"Variable pay — and the conditions attached to it.",
+  tiers:"IRIICCII"},
+ {id:"investorrights", label:"Investor rights",
+  re:/\b(liquidation preference|anti[- ]?dilution|drag[- ]?along|tag[- ]?along|board (?:seat|observer|of directors)|voting rights|protective provisions|information rights|pro[- ]?rata|pre[- ]?emptive)\b/i,
+  why:"Control and downside protection — what your money actually buys.",
+  tiers:"RRIIRRCI"},
+ {id:"transferrestrict", label:"Transfer restrictions",
+  re:/\b(right of first refusal|ROFR|lock[- ]?up|transfer restrictions?|shall not (?:sell|transfer|dispose)|consent (?:prior )?to (?:any )?transfer)\b/i,
+  why:"How hard it is to sell or exit your position.",
+  tiers:"RRIIRRCI"},
+ {id:"exclusivity", label:"Exclusivity",
+  re:/\b(exclusiv(?:e|ity)\b|sole (?:supplier|provider|distributor|agent)|shall not (?:purchase|source|sell).{0,30}(?:from|to) (?:any )?other)\b/i,
+  why:"Locks you to one counterparty — flexibility has a price.",
+  tiers:"CCIIIRRR"},
+ {id:"pricechange", label:"Price changes & indexation",
+  re:/\b(increase the (?:price|rent|fees?)|price (?:adjustment|increase|revision)|adjust the (?:rent|price|fees?)|indexation|indexed to|consumer price index|CPI\b|rent review)\b/i,
+  why:"The price you agreed is allowed to move — see how and how often.",
+  tiers:"CICRIIRC"},
+ {id:"utilities", label:"Utilities & extra charges",
+  re:/\b(utilities|service charges?|common area (?:maintenance|charges)|CAM charges|operating expenses|property tax(?:es)? payable by)\b/i,
+  why:"Costs on top of the headline price.",
+  tiers:"RICCIIII"},
+ {id:"pets", label:"Pets, alterations & house rules",
+  re:/\b(pets?\b|alterations?|redecorat\w+|renovat\w+|no smoking|smoking (?:is|policy)|guest policy|overnight guests)\b/i,
+  why:"Day-to-day living restrictions people discover too late.",
+  tiers:"IICRIIII"},
+ {id:"prepayment", label:"Prepayment penalty",
+  re:/\b(prepayments?\b|early repayment|repay (?:the loan )?early|pay off (?:the loan )?early|redemption (?:fee|penalty))\b/i,
+  why:"Paying early can cost you — check the exit price of the debt.",
+  tiers:"CIIIIIRC"}
+];
+const ROLE_INDEX = {BUY:0, SEL:1, TEN:2, LAN:3, EMP:4, EMR:5, INV:6, CUS:7};
+const TIER_RANK = {C:3, R:2, I:1};
+
+/* DR-07: financial-impact detector */
+/* DR-18: both 1,000.00 and 1.000,00 separator styles */
+const MONEY_RE = /[$€£]\s?\d[\d.,]*\d|[$€£]\s?\d|\b\d[\d.,]*\d\s?(?:USD|EUR|GBP|dollars|euros)\b|\b\d\s?(?:USD|EUR|GBP|dollars|euros)\b|\b\d+(?:[.,]\d+)?\s?(?:%|percent)\b|\bper\s+(?:month|week|day|annum|year|hour)\b/gi;
+
+/* DR-08: action-required detector */
+const OBLIGATION_RE = /\b(shall|must|is required to|agrees? to|obligated)\b/i;
+/* DR-18: written-number deadlines ("thirty (30) days") and month deadlines */
+const NUMWORD = "(?:\\d+|seven|ten|fourteen|fifteen|twenty|thirty|forty[- ]five|sixty|ninety)";
+const DEADLINE_RE = new RegExp(
+  "\\b(within "+NUMWORD+"\\s*(?:\\(\\d+\\)\\s*)?(?:calendar |business )?(?:days?|months?)" +
+  "|no later than [^.;]{0,40}|prior written notice|by the \\d+(?:st|nd|rd|th)|upon (?:signing|execution))\\b","i");
+
+/* DR-11: language guard word list */
+const FUNC_WORDS = ["the","and","of","to","in","shall","agreement","this","any","or","by","with"];
+
+/* DR-09: segmentation — headings, else paragraphs; merge clauses < 120 chars into next */
+const HEADING_RE = /^\s*(?:\d+[\.\)]\s+|Section\s+\d+|Article\s+\d+|Clause\s+\d+|[A-Z][A-Z\s\d\.,&\-:']{3,}$)/;
+
+function segment(pages){
+  // pages: [{num, text}] ; paste mode passes one pseudo-page {num:null}
+  const rough = [];
+  for(const pg of pages){
+    const lines = pg.text.split(/\n/);
+    let cur = null;
+    for(const rawLine of lines){
+      const line = rawLine.trimEnd();
+      const isBlank = line.trim() === "";
+      const isHeading = !isBlank && HEADING_RE.test(line.trim());
+      if(isHeading || (isBlank && cur && cur.text.trim())){
+        if(cur && cur.text.trim()) rough.push(cur);
+        cur = isHeading ? {page:pg.num, text:line+"\n"} : null;
+        continue;
+      }
+      if(isBlank) continue;
+      if(!cur) cur = {page:pg.num, text:""};
+      cur.text += line+"\n";
+    }
+    if(cur && cur.text.trim()) rough.push(cur);
+  }
+  // merge short fragments forward (DR-09: <120 chars merge into following clause)
+  const merged = [];
+  let carry = null;
+  for(const c of rough){
+    if(carry){ c.text = carry.text + "\n" + c.text; c.page = carry.page; carry = null; }
+    if(c.text.trim().length < 120){ carry = c; } else { merged.push(c); }
+  }
+  if(carry) merged.push(carry);
+  return merged.map((c,i)=>({idx:i, page:c.page, text:c.text.trim()}));
+}
+
+function classify(clause){
+  const cats = CATEGORIES.filter(cat=>cat.re.test(clause.text));
+  const money = clause.text.match(MONEY_RE) || [];
+  const hasObligation = OBLIGATION_RE.test(clause.text);
+  const deadline = clause.text.match(DEADLINE_RE);
+  return {
+    ...clause,
+    cats,
+    amounts:[...new Set(money.map(m=>m.trim()))],
+    isFinancial: money.length>0,                        // DR-07
+    isAction: hasObligation || !!deadline,              // DR-08
+    deadlineText: deadline ? deadline[0] : null
+  };
+}
+
+/* DR-05: tier for a clause given a role — highest tier among matched categories; DR-03 safety: no category → treated as unclassified (never I) */
+function tierFor(clause, roleId){
+  if(clause.cats.length===0) return {tier:"U", primary:null};
+  let best = {tier:"I", rank:0, primary:clause.cats[0]};
+  for(const cat of clause.cats){
+    const t = cat.tiers[ROLE_INDEX[roleId]];
+    // DR-04a: strictly higher tier wins; on ties a specific category beats generic "payment"
+    if(TIER_RANK[t] > best.rank ||
+       (TIER_RANK[t] === best.rank && best.primary && best.primary.id === "payment" && cat.id !== "payment")){
+      best = {tier:t, rank:TIER_RANK[t], primary:cat};
+    }
+  }
+  return {tier:best.tier, primary:best.primary};
+}
+
+/* DR-11: language guard */
+function looksNonEnglish(fullText){
+  const chars = fullText.length;
+  if(chars < 400) return false;
+  let hits = 0;
+  const lower = fullText.toLowerCase();
+  for(const w of FUNC_WORDS){
+    const m = lower.match(new RegExp("\\b"+w+"\\b","g"));
+    if(m) hits += m.length;
+  }
+  return (hits / chars) * 1000 < 3;
+}
+
+/* ============================ DR-12: DEMO DOC ============================ */
+const DEMO_TEXT = `RESIDENTIAL LEASE AGREEMENT — 14 OAK STREET
+
+1. PARTIES AND PREMISES. This Residential Lease Agreement is made between Marlowe Property Group LLC ("Landlord") and the undersigned resident ("Tenant") for the dwelling at 14 Oak Street, Unit 3, including one assigned parking space. The premises are leased for residential use only, and Tenant agrees to occupy the premises as a primary residence.
+
+2. TERM AND AUTOMATIC RENEWAL. The initial term runs for twelve (12) months from the commencement date. This lease shall automatically renew on a month-to-month basis at the end of the initial term unless either party gives at least 60 days' prior written notice of non-renewal. During any renewal period the Landlord may adjust the rent with 60 days' written notice.
+
+3. RENT. Tenant shall pay rent of $1,450 per month, payable in advance no later than the 1st day of each calendar month. Payment shall be made by bank transfer to the account designated by Landlord. Cash payments are not accepted.
+
+4. LATE PAYMENT. If rent is not received by the 5th day of the month, Tenant shall pay a late fee of $75 plus interest on overdue amounts at 5% per annum. Repeated late payment (three or more times in any twelve-month period) constitutes a material breach of this lease.
+
+5. SECURITY DEPOSIT. Tenant shall pay a security deposit of $2,175 upon signing. The deposit may be applied to unpaid rent, damages beyond normal wear and tear, and required cleaning. If Tenant repaints any wall without written consent, a repainting charge of $400 per room will be deducted. The balance will be returned within 30 days of move-out with an itemized statement.
+
+6. MAINTENANCE AND REPAIRS. Tenant shall keep the premises in good condition and promptly report any needed repairs. Landlord is responsible for structural repairs, plumbing, heating, and electrical systems. Tenant is responsible for repairs necessitated by Tenant's negligence, and for replacing light bulbs, smoke-detector batteries, and air filters.
+
+7. INSURANCE. Tenant is required to maintain renter's insurance with liability coverage of not less than 100,000 dollars for the duration of the tenancy and shall provide proof of coverage upon request. Landlord's insurance does not cover Tenant's personal property.
+
+8. ASSIGNMENT AND SUBLETTING. Tenant shall not assign this lease or sublet the premises, in whole or in part, without the prior written consent of Landlord. Any short-term rental listing of the premises is a material breach.
+
+9. ENTRY BY LANDLORD. Landlord may enter the premises for inspection, repairs, or showings with at least 24 hours' notice, except in emergencies. Tenant shall not change the locks without providing Landlord a copy of the new key.
+
+10. TERMINATION. Either party may terminate at the end of the term with 60 days' prior written notice. Early termination by Tenant requires payment of a lease-break fee equal to two months' rent, and Tenant remains liable for rent until re-letting.
+
+11. INDEMNIFICATION. Tenant shall indemnify and hold harmless Landlord from claims arising from Tenant's use of the premises, except where caused by Landlord's negligence.
+
+12. GOVERNING LAW. This lease shall be governed by the laws of the state in which the premises are located.
+
+13. SEVERABILITY AND ENTIRE AGREEMENT. If any provision is held invalid, the remainder continues in effect. This document is the entire agreement; headings are for convenience only and this lease may be signed in counterparts.`;
+
+/* ================================ UI ==================================== */
+const $ = id => document.getElementById(id);
+let state = {clauses:[], role:null, docName:"", pasted:false,
+             ai:{engine:null, notes:{}}};
+
+/* ============================ DR-20: AI BOOST =========================== */
+const AI_MODEL = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
+const AI_LIB_URL = "https://esm.run/@mlc-ai/web-llm";
+const CLS_SYS = "You label contract clauses. Reply with exactly one id from this list, or the word none: " +
+  CATEGORIES.map(c=>c.id).join(", ") + ". Reply with the id only, no other words.";
+const NOTE_SYS = roleLabel => "In one sentence of at most 25 plain words, tell the " + roleLabel +
+  " what this clause means for them in practice. No legal advice, no hedging, no quotes.";
+
+async function aiSupported(){
+  if(window.__wmMockAI) return true;
+  if(!navigator.gpu) return false;
+  try{ return !!(await navigator.gpu.requestAdapter()); }catch(e){ return false; }
+}
+
+async function setupAICard(){
+  $("aiCard").style.display = "block";
+  const ok = await aiSupported();
+  if(!ok){
+    $("aiBtn").disabled = true;
+    $("aiStatus").textContent = "This browser can't run on-device AI (needs WebGPU — Safari on iOS 26+ or a recent desktop browser). The rules engine below works everywhere.";
+  }
+}
+
+async function getAIEngine(){
+  if(state.ai.engine) return state.ai.engine;
+  const lib = window.__wmMockAI || await import(AI_LIB_URL);
+  const engine = await lib.CreateMLCEngine(AI_MODEL, {initProgressCallback: p=>{
+    $("aiProgBar").style.width = Math.round((p.progress||0)*100)+"%";
+    $("aiProgText").textContent = p.text || "Downloading model…";
+  }});
+  state.ai.engine = engine;
+  return engine;
+}
+
+async function aiAsk(engine, sys, user, maxTokens){
+  const r = await engine.chat.completions.create({
+    messages:[{role:"system",content:sys},{role:"user",content:user}],
+    temperature:0, max_tokens:maxTokens});
+  return (r.choices[0].message.content||"").trim();
+}
+
+async function runBoost(){
+  const btn = $("aiBtn");
+  btn.disabled = true;
+  try{
+    $("aiProg").style.display = "block";
+    const engine = await getAIEngine();
+    $("aiProg").style.display = "none";
+    // Task A (DR-20): classify unclassified clauses — category id only, validated
+    const un = state.clauses.filter(c=>c.cats.length===0).slice(0,20);
+    let done=0, applied=0;
+    for(const c of un){
+      $("aiStatus").textContent = `AI classifying unmatched clauses ${++done}/${un.length}…`;
+      const raw = await aiAsk(engine, CLS_SYS, c.text.slice(0,900), 8);
+      const id = raw.toLowerCase().replace(/[^a-z]/g,"");
+      const cat = CATEGORIES.find(x=>x.id===id);
+      if(cat){ c.cats=[cat]; c.aiClassified=true; applied++; } // invalid answers rejected: stays unclassified
+    }
+    // Task B (DR-20): plain-language notes for the current role's critical clauses
+    let notes=0;
+    if(state.role){
+      const roleLabel = ROLES.find(r=>r.id===state.role).label;
+      const crits = state.clauses.filter(c=>tierFor(c,state.role).tier==="C").slice(0,8);
+      state.ai.notes[state.role] = state.ai.notes[state.role] || {};
+      let n=0;
+      for(const c of crits){
+        $("aiStatus").textContent = `AI writing notes ${++n}/${crits.length}…`;
+        const t = await aiAsk(engine, NOTE_SYS(roleLabel), c.text.slice(0,900), 60);
+        if(t && t.length<=220){ state.ai.notes[state.role][c.idx]=t; notes++; }
+      }
+    }
+    $("aiStatus").textContent = `AI boost done — ${applied} clause${applied===1?"":"s"} newly classified, ${notes} note${notes===1?"":"s"} added. On-device AI can be wrong — treat notes as hints.`;
+    btn.textContent = "Re-run AI boost";
+    btn.disabled = false;
+    render();
+  }catch(err){
+    $("aiProg").style.display = "none";
+    $("aiStatus").textContent = "AI couldn't start ("+(err && err.message ? err.message : "error")+"). The rules-engine results below are unaffected.";
+    btn.disabled = false;
+  }
+}
+
+function esc(s){const d=document.createElement("div"); d.textContent=s; return d.innerHTML;}
+
+function setStatus(html){ const el=$("status"); el.style.display = html?"block":"none"; el.innerHTML = html||""; }
+
+function init(){
+  $("topDisclaimer").textContent = DISCLAIMER;   // DR-14 shown above results
+  $("footDisclaimer").textContent = DISCLAIMER;  // DR-14 shown in footer
+  // role chips
+  const rp = $("rolePicker");
+  ROLES.forEach(r=>{
+    const b=document.createElement("button");
+    b.className="role-chip"; b.textContent=r.label; b.dataset.role=r.id;
+    b.setAttribute("aria-pressed","false");
+    b.onclick=()=>selectRole(r.id);
+    rp.appendChild(b);
+  });
+  const rs=$("roleSwitch");
+  rs.innerHTML = ROLES.map(r=>`<option value="${r.id}">I am the ${r.label}</option>`).join("");
+  rs.onchange = ()=>selectRole(rs.value);
+
+  // upload interactions
+  const dz=$("dropzone"), fi=$("fileInput");
+  dz.onclick = ()=>fi.click();
+  dz.onkeydown = e=>{ if(e.key==="Enter"||e.key===" ") fi.click(); };
+  dz.ondragover = e=>{e.preventDefault(); dz.classList.add("drag");};
+  dz.ondragleave = ()=>dz.classList.remove("drag");
+  dz.ondrop = e=>{e.preventDefault(); dz.classList.remove("drag");
+    if(e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);};
+  fi.onchange = ()=>{ if(fi.files[0]) handleFile(fi.files[0]); fi.value=""; };
+
+  $("pasteToggle").onclick = ()=>{ const p=$("pasteBox");
+    p.style.display = p.style.display==="block"?"none":"block"; };
+  $("analyzePaste").onclick = ()=>{
+    const t=$("pasteArea").value;
+    if(/^\s*https?:\/\/\S+\s*$/i.test(t)){ setStatus(`<div class="notice warn"><b>That's a link, not the document.</b>This tool can't fetch web pages — open the document, select all its text, copy it, and paste the text here.</div>`); return; }
+    if(t.trim().length<40){ setStatus(`<div class="notice warn"><b>That text is too short to analyze.</b>Paste the full document text (at least a few sentences).</div>`); return; }
+    analyze([{num:null,text:t}], "Pasted text", true);
+  };
+  $("demoBtn").onclick = ()=>analyze([{num:null,text:DEMO_TEXT}], "Demo: Residential Lease — 14 Oak Street", true);
+  $("aiBtn").onclick = runBoost; // DR-20
+  $("startOver").onclick = ()=>{ $("results").style.display="none";
+    $("uploadCard").style.display="block"; $("roleCard").style.display="block";
+    setStatus(""); window.scrollTo({top:0}); };
+}
+
+function selectRole(id){
+  state.role = id; syncChips();
+  $("roleSwitch").value = id;
+  if(state.clauses.length) render();
+  // DR-20: AI notes are role-specific — tell the user how to get them for this role
+  if(state.ai.engine && state.role && !(state.ai.notes[state.role] && Object.keys(state.ai.notes[state.role]).length)){
+    $("aiStatus").textContent = "AI notes are written per role — tap \"Re-run AI boost\" to get notes for the " +
+      ROLES.find(r=>r.id===state.role).label + ".";
+  }
+}
+function syncChips(){
+  document.querySelectorAll(".role-chip").forEach(b=>
+    b.setAttribute("aria-pressed", b.dataset.role===state.role ? "true":"false"));
+}
+
+async function handleFile(file){
+  if(!/pdf$/i.test(file.name) && file.type!=="application/pdf"){
+    setStatus(`<div class="notice error"><b>That doesn't look like a PDF.</b>Choose a .pdf file, or use "paste text instead" for other formats.</div>`);
+    return;
+  }
+  if(!window.pdfjsLib){
+    setStatus(`<div class="notice error"><b>PDF reader couldn't load (no internet?).</b>You can still use "paste text instead" — copy the document text and paste it.</div>`);
+    return;
+  }
+  setStatus(`<div class="notice"><span class="spinner"></span>Reading ${esc(file.name)}…</div>`);
+  try{
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"; // DR-01
+    const buf = await file.arrayBuffer();
+    const doc = await pdfjsLib.getDocument({data:buf}).promise;
+    const pages=[];
+    for(let p=1; p<=doc.numPages; p++){
+      const page = await doc.getPage(p);
+      const tc = await page.getTextContent();
+      // DR-09a: rebuild lines from y-positions; a vertical gap > 1.6× the median
+      // line gap is a paragraph break (blank line), otherwise a single newline.
+      const lines=[]; let cur={y:null, text:""};
+      for(const item of tc.items){
+        if(!item.str.trim() && !item.hasEOL) continue;
+        const y = item.transform[5];
+        if(cur.y!==null && Math.abs(y-cur.y)>2){ lines.push(cur); cur={y, text:""}; }
+        if(cur.y===null) cur.y=y;
+        cur.text += (cur.text?" ":"") + item.str.trim();
+      }
+      if(cur.text) lines.push(cur);
+      const gaps = lines.slice(1).map((l,i)=>Math.abs(lines[i].y-l.y)).filter(g=>g>0.5).sort((a,b)=>a-b);
+      const median = gaps.length ? gaps[Math.floor(gaps.length/2)] : 12;
+      let text="";
+      lines.forEach((l,i)=>{
+        if(i>0){ text += (Math.abs(lines[i-1].y-l.y) > median*1.6) ? "\n\n" : "\n"; }
+        text += l.text;
+      });
+      pages.push({num:p, text});
+    }
+    const total = pages.map(p=>p.text).join("").replace(/\s+/g," ").trim();
+    if(total.length < 200){ // DR-10
+      setStatus(`<div class="notice warn"><b>This PDF appears to be scanned images — no readable text.</b>Two ways forward: use your phone's text recognition (iPhone Live Text or Google Lens) to copy the text from the pages, then use "paste text instead" below the upload box — or ask the sender for the original (non-scanned) PDF.</div>`);
+      return;
+    }
+    analyze(pages, file.name, false);
+  }catch(err){
+    setStatus(`<div class="notice error"><b>Couldn't read that PDF (${esc(err.message||"unknown error")}).</b>If it's password-protected, remove the password first — or use "paste text instead".</div>`);
+  }
+}
+
+function analyze(pages, name, pasted){
+  const clauses = segment(pages).map(classify); // DR-09 then DR-04/07/08
+  if(clauses.length===0){
+    setStatus(`<div class="notice warn"><b>No readable clauses found.</b>The document may be empty — try pasting its text instead.</div>`);
+    return;
+  }
+  state.clauses = clauses; state.docName = name; state.pasted = pasted;
+  state.ai.notes = {}; // DR-20: notes are per-document; keep the loaded engine
+  $("aiStatus").textContent = ""; $("aiBtn").textContent = "Enable AI boost";
+  const full = pages.map(p=>p.text).join("\n");
+  $("langBanner").innerHTML = looksNonEnglish(full) // DR-11: warn, don't block
+    ? `<div class="notice warn" style="margin-bottom:16px"><b>This looks like a non-English document.</b>Version 1 only reads English — the results below are unreliable.</div>` : "";
+  setStatus("");
+  $("uploadCard").style.display="none";
+  $("results").style.display="block";
+  setupAICard(); // DR-20
+  $("docName").textContent = name + " · " + clauses.length + " clauses";
+  if(!state.role){
+    // hurried-user path: no role picked yet — keep role card visible and demand it
+    $("roleCard").scrollIntoView({behavior:"smooth"});
+    $("roleCard").classList.add("attention");
+    setTimeout(()=>$("roleCard").classList.remove("attention"), 2500);
+  }
+  render();
+}
+
+function pageRef(c){ return c.page ? "p. "+c.page : "—"; } // DR-09 paste mode
+
+function clauseCard(c, tier, primary){
+  const tags = c.cats.map(cat=>`<span class="cat">${esc(cat.label)}</span>`).join("") +
+               (c.aiClassified ? `<span class="chip a">AI classified</span>` : "");
+  const aiNote = state.role && state.ai.notes[state.role] && state.ai.notes[state.role][c.idx];
+  const short = c.text.length>300 ? esc(c.text.slice(0,300))+`… <span class="more" data-i="${c.idx}">show all</span>` : esc(c.text);
+  const flags = (c.isFinancial?`<span class="chip f">€ financial</span>`:"") +
+                (c.isAction?`<span class="chip a">action</span>`:"");
+  const tierChip = tier==="C"?`<span class="chip c">Critical</span>`
+                 : tier==="R"?`<span class="chip r">Must read</span>`
+                 : tier==="I"?`<span class="chip i">Can ignore</span>`
+                 : tier==="U"?`<span class="chip r">Unclassified</span>` : "";
+  const why = primary ? `<div class="why">${esc(primary.why)}</div>`
+            : `<div class="why">The engine couldn't categorize this — skim it yourself.</div>`; // DR-03
+  const amounts = c.amounts.length && c.isFinancial
+    ? `<div class="amounts">${c.amounts.map(a=>`<span class="amt">${esc(a)}</span>`).join("")}</div>` : "";
+  const cls = tier==="U" ? "r" : (tier ? tier.toLowerCase() : "");
+  const noteHtml = aiNote ? `<div class="ainote"><span class="chip a">on-device AI</span> ${esc(aiNote)}</div>` : "";
+  return `<div class="clause ${cls}" data-clause="${c.idx}">
+    <div class="top">${tierChip}${flags}${tags}<span class="page">${pageRef(c)}</span></div>
+    ${why}<div class="excerpt" data-full="${esc(c.text)}">${short}</div>${amounts}${noteHtml}</div>`;
+}
+
+function render(){
+  const role = state.role;
+  const counts = {C:0,R:0,I:0,U:0};
+  const buckets = {C:[],R:[],I:[],U:[]};
+  const financial=[], actions=[];
+
+  for(const c of state.clauses){
+    const {tier, primary} = role ? tierFor(c, role) : {tier:null, primary:null};
+    if(role){ counts[tier]++; buckets[tier].push({c,tier,primary}); }
+    if(c.isFinancial) financial.push({c,tier,primary});
+    if(c.isAction) actions.push({c,tier,primary});
+  }
+
+  if(!role){
+    // no role selected: show only a prompt in results (DR-13 flow: role drives everything)
+    ["critical","read","ignore","unclassified"].forEach(k=>$("list-"+k).innerHTML="");
+    $("list-critical").innerHTML =
+      `<div class="notice"><b>Pick your role in step 2 above.</b>Critical / read / ignore depends entirely on which side of this document you are.</div>`;
+    $("countPills").innerHTML="";
+    $("list-financial").innerHTML = financial.length
+      ? financial.map(f=>clauseCard(f.c,null,f.c.cats[0]||null)).join("")
+      : `<p class="empty">No amounts, fees, or percentages detected.</p>`;
+    // DR-08a: without a role, only deadline items are actionable
+    $("list-action").innerHTML = renderActions(actions.filter(a=>a.c.deadlineText));
+    wireExpanders();
+    return;
+  }
+
+  /* DR-19: coverage transparency — unclassified is shown, never buried */
+  $("countPills").innerHTML =
+    `<span class="pill c">${counts.C} critical</span>
+     <span class="pill r">${counts.R} to read</span>
+     <span class="pill i">${counts.I} ignorable</span>` +
+    (counts.U ? `<span class="pill i">${counts.U} unclassified</span>` : "");
+
+  $("list-critical").innerHTML = buckets.C.length
+    ? buckets.C.map(b=>clauseCard(b.c,b.tier,b.primary)).join("")
+    : `<p class="empty">Nothing critical detected for your role — still skim "Must read".</p>`;
+
+  $("list-read").innerHTML = buckets.R.length
+    ? buckets.R.map(b=>clauseCard(b.c,b.tier,b.primary)).join("")
+    : `<p class="empty">Nothing beyond the critical items.</p>`;
+
+  $("list-unclassified").innerHTML = buckets.U.map(b=>clauseCard(b.c,"U",null)).join("");
+  $("count-unclassified").textContent = `(${counts.U})`;
+  $("fold-unclassified").style.display = counts.U ? "block":"none";
+
+  $("list-ignore").innerHTML = buckets.I.length
+    ? buckets.I.map(b=>clauseCard(b.c,b.tier,b.primary)).join("")
+    : `<p class="empty">Nothing safely ignorable — short document.</p>`;
+  $("count-ignore").textContent = `(${counts.I})`;
+
+  $("list-financial").innerHTML = financial.length
+    ? financial.map(f=>clauseCard(f.c, role?tierFor(f.c,role).tier:"R", f.primary||f.c.cats[0]||null)).join("")
+    : `<p class="empty">No amounts, fees, or percentages detected.</p>`;
+
+  // DR-08a: only obligations relevant to this role (tier C/R/U), deadlines first
+  const relevant = actions.filter(a=>a.tier!=="I")
+    .sort((x,y)=>(y.c.deadlineText?1:0)-(x.c.deadlineText?1:0));
+  $("list-action").innerHTML = renderActions(relevant);
+  wireExpanders();
+}
+
+function renderActions(actions){
+  if(!actions.length) return `<p class="empty">No explicit obligations or deadlines detected.</p>`;
+  return actions.map((a,i)=>{
+    let excerpt = esc(a.c.text.slice(0,220)) + (a.c.text.length>220?"…":"");
+    if(a.c.deadlineText){ // DR-08: bold the deadline text
+      const dl = esc(a.c.deadlineText);
+      excerpt = excerpt.split(dl).join(`<b>${dl}</b>`);
+    }
+    return `<div class="todo"><input type="checkbox" id="todo${i}"
+      onchange="this.closest('.todo').classList.toggle('done',this.checked)">
+      <label for="todo${i}">${excerpt}<span class="page">${pageRef(a.c)}</span></label></div>`;
+  }).join("");
+}
+
+function wireExpanders(){
+  document.querySelectorAll(".excerpt .more").forEach(m=>{
+    m.onclick = ()=>{ const ex=m.closest(".excerpt"); ex.innerHTML = ex.dataset.full; };
+  });
+}
+
+init();
+</script>
+</body>
+</html>
