@@ -170,6 +170,11 @@
   /* Ask the document */
   #askLog{margin-top:10px;}
   .q{font-weight:650; margin-top:10px;}
+  .evdlabel{font-size:.72rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+            color:var(--money); margin-top:8px;}
+  .evd{border-left:3px solid var(--money); background:var(--money-bg); border-radius:0 8px 8px 0;
+       padding:7px 10px; margin-top:6px; font-size:.88rem;}
+  .evd .page{float:right; margin-left:8px;}
   .a{background:var(--accent-bg); border-radius:10px; padding:9px 12px; margin-top:5px; font-size:.92rem;}
   .askrow{display:flex; gap:8px; margin-top:4px;}
   .askrow input{flex:1; border:1px solid var(--line); border-radius:10px; padding:9px 12px;
@@ -778,7 +783,7 @@ const NOTE_SYS = roleLabel => "In one sentence of at most 25 plain words, tell t
   " the practical consequence of this clause for them. Use your own words — do not repeat, quote, or copy the document's phrasing. No legal advice, no hedging.";
 const SUM_SYS = roleLabel => "You are summarizing a document for the " + roleLabel +
   ". In at most 60 plain words, give the bottom line: what they are committing to, the biggest financial exposure, and the one thing to check before signing. Use your own words.";
-const ASK_SYS = "Answer the user's question using ONLY these excerpts from their document. Quote exact amounts, dates and deadlines from the excerpts when relevant. If the excerpts don't contain the answer, say you can't find it in the document. At most 80 plain words.";
+const ASK_SYS = "Answer the user's question using ONLY these excerpts from their document. The MOST RELEVANT LINES are the best evidence — prefer them. Quote exact amounts, dates and deadlines. If the excerpts don't contain the answer, say you can't find it in the document. If the question asks for an opinion or recommendation (like 'which is best'), say the document doesn't make one and state only what it lists. At most 80 plain words.";
 
 async function aiSupported(){
   if(window.__wmMockAI) return true;
@@ -942,6 +947,45 @@ function buildAskContext(question){
   return ctx;
 }
 
+/* DR-27: deterministic evidence lines — verbatim quotes, zero AI */
+function buildEvidence(question){
+  const qTokens = tokensOf(question);
+  const qNums = question.match(/\d[\d.,]*/g)||[];
+  const moneyIntent = /\b(fee|fees|cost|costs|price|pay|paid|refund\w*|deposit|charge\w*|money|much|expensive|owe)\b/i.test(question);
+  // DR-27a: scan the deterministic transform (original document order), so a
+  // heading like "Booking Fee" stays joined to its value line even across clause splits
+  const cands=[]; let curPage=null;
+  const mdLines = (state.docMarkdown||"").split("\n").map(s=>s.trim()).filter(Boolean);
+  for(let i=0;i<mdLines.length;i++){
+    let ln = mdLines[i];
+    const pm = ln.match(/^— page (\d+) —$/);
+    if(pm){ curPage = +pm[1]; continue; }
+    ln = ln.replace(/^## /,"");
+    let t = ln;
+    const next = (mdLines[i+1]||"").replace(/^## /,"");
+    if(t.length<50 && next && !/^— page/.test(mdLines[i+1])) t += " — " + next;
+    if(t.length<8) continue;
+    cands.push({c:{page:curPage}, text:t.slice(0,220)});
+  }
+  const N=cands.length, df=new Map();
+  const toks = cands.map(cd=>{ const t=tokensOf(cd.text); for(const w of t) df.set(w,(df.get(w)||0)+1); return t; });
+  const scored = cands.map((cd,i)=>{
+    let s=0;
+    for(const w of qTokens) if(toks[i].has(w)) s += Math.log(1 + N/(df.get(w)||1));
+    for(const n of qNums) if(cd.text.includes(n)) s += 3;
+    if(moneyIntent && (cd.text.match(MONEY_RE)||[]).length) s += 2;
+    return {cd, s};
+  }).filter(x=>x.s>0).sort((a,b)=>b.s-a.s);
+  const out=[], seen=new Set();
+  for(const {cd} of scored){
+    const key = cd.text.slice(0,60);
+    if(seen.has(key)) continue;
+    seen.add(key); out.push(cd);
+    if(out.length>=3) break;
+  }
+  return out;
+}
+
 /* DR-25: every number in the answer must exist in the excerpts */
 function numsIn(s){ return new Set((s.match(/\d[\d.,]*\d|\d/g)||[]).map(n=>n.replace(/[.,]/g,""))); }
 function answerVerified(ans, ctx){
@@ -954,10 +998,18 @@ async function runAsk(){
   if(!q) return;
   if(!state.ai.engine){ $("aiStatus").textContent = "Enable the AI boost first, then ask away."; return; }
   const log = $("askLog");
-  log.insertAdjacentHTML("beforeend", `<div class="q">${esc(q)}</div><div class="a" id="askPending"><span class="spinner"></span>Reading your document…</div>`);
+  // DR-27: verbatim evidence first — deterministic, trustworthy, page-referenced
+  const evidence = buildEvidence(q);
+  const evHtml = evidence.length
+    ? `<div class="evdlabel">From your document — exact lines</div>` +
+      evidence.map(e=>`<div class="evd"><span class="page">${pageRef(e.c)}</span>${esc(e.text)}</div>`).join("")
+    : "";
+  log.insertAdjacentHTML("beforeend", `<div class="q">${esc(q)}</div>${evHtml}<div class="a" id="askPending"><span class="spinner"></span>AI reading these lines…</div>`);
   $("askInput").value=""; $("askBtn").disabled = true;
   try{
-    const ctx = buildAskContext(q); // DR-25: windowed, table-aware context
+    const ctx = "MOST RELEVANT LINES:\n" +
+      (evidence.map(e=>`[${pageRef(e.c)}] ${e.text}`).join("\n") || "(none)") +
+      "\n\nMORE CONTEXT:\n" + buildAskContext(q); // DR-25 windows
     let ans = await aiAsk(state.ai.engine, ASK_SYS, "EXCERPTS:\n"+ctx+"\n\nQUESTION: "+q, 140);
     let caution = "";
     if(ans && !answerVerified(ans, ctx)){ // DR-25: strict retry, then visible caution
@@ -967,7 +1019,7 @@ async function runAsk(){
       if(ans && !answerVerified(ans, ctx))
         caution = `<div class="role-hint" style="margin-top:6px">Caution: some numbers in this answer don't match the document — double-check the pages cited before relying on them.</div>`;
     }
-    $("askPending").outerHTML = `<div class="a">${esc(ans||"I can't find that in the document.")}${caution}</div>`;
+    $("askPending").outerHTML = `<div class="a"><span class="chip a">AI reading — verify against the lines above</span><br>${esc(ans||"I can't find that in the document.")}${caution}</div>`;
   }catch(err){
     $("askPending").outerHTML = `<div class="a">AI error: ${esc(err.message||"unknown")}. Try again.</div>`;
   }
@@ -1095,21 +1147,36 @@ async function handleFile(file){
     for(let p=1; p<=doc.numPages; p++){
       const page = await doc.getPage(p);
       const tc = await page.getTextContent();
-      const lines=[]; let cur={y:null, text:"", endX:null, size:0};
+      const lines=[]; let cur={y:null, x0:null, text:"", endX:null, size:0};
       for(const item of tc.items){
         if(!item.str.trim() && !item.hasEOL) continue;
         rawChars += (item.str.match(/[A-Za-z0-9]/g)||[]).length;
         const y = item.transform[5], x = item.transform[4];
         const sz = Math.hypot(item.transform[2], item.transform[3]);
-        if(cur.y!==null && Math.abs(y-cur.y)>2){ lines.push(cur); cur={y, text:"", endX:null, size:0}; }
+        if(cur.y!==null && Math.abs(y-cur.y)>2){ lines.push(cur); cur={y, x0:null, text:"", endX:null, size:0}; }
         if(cur.y===null) cur.y=y;
+        if(cur.x0===null) cur.x0=x;
         const colBreak = cur.endX!==null && (x - cur.endX) > 18; // DR-25 column gap
         cur.text += (cur.text ? (colBreak ? " | " : " ") : "") + item.str.trim();
         cur.endX = x + (item.width||0);
         cur.size = Math.max(cur.size, sz);
       }
       if(cur.text) lines.push(cur);
-      linesPerPage.push({num:p, lines});
+      /* DR-28: the PDF content stream is NOT visual order — reconstruct it.
+         Sort lines top-to-bottom (y desc), then re-merge fragments that share a
+         baseline (|Δy| ≤ 2) left-to-right with DR-25 column separators. */
+      lines.sort((a,b)=> (b.y - a.y) || (a.x0 - b.x0));
+      const vis=[];
+      for(const l of lines){
+        const prev = vis[vis.length-1];
+        if(prev && Math.abs(prev.y - l.y) <= 2){
+          const gap = l.x0 - prev.endX;
+          prev.text += (gap > 18 ? " | " : " ") + l.text;
+          prev.endX = Math.max(prev.endX, l.endX);
+          prev.size = Math.max(prev.size, l.size);
+        } else vis.push(l);
+      }
+      linesPerPage.push({num:p, lines:vis});
     }
     // DR-23: strip repeated page headers/footers (same short line on ≥3 pages)
     if(linesPerPage.length>=3){
