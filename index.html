@@ -3,58 +3,76 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>What Matters? — role-based PDF contract triage</title>
+<meta name="color-scheme" content="light dark">
+<title>What Matters? — role-based document triage</title>
 <!-- DR-01: single-file app, pdf.js 3.11.174 from cdnjs, no storage APIs, no server -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
   :root{
-    --bg:#f6f7f9; --card:#ffffff; --ink:#1a2233; --muted:#5b6478;
-    --critical:#c62838; --critical-bg:#fdeef0; --read:#a05a00; --read-bg:#fdf3e3;
-    --ignore:#5b6478; --ignore-bg:#eef0f4; --accent:#2450a4; --accent-bg:#e9effb;
-    --money:#0c6b4d; --money-bg:#e6f5ef; --line:#e3e6ec; --radius:12px;
+    --bg:#f4f6f9; --card:#ffffff; --ink:#131a2a; --muted:#5c6577; --line:#e4e8ef;
+    --critical:#cc2b3d; --critical-bg:#fdedef; --read:#9a5a06; --read-bg:#fcf2e2;
+    --ignore:#66708a; --ignore-bg:#edf0f5; --accent:#2b5bd7; --accent-bg:#e9effc;
+    --money:#0a6e4f; --money-bg:#e4f4ec; --high:#cc2b3d; --med:#b06a00; --low:#0a6e4f;
+    --radius:14px; --shadow:0 1px 2px rgba(15,25,50,.05),0 6px 18px rgba(15,25,50,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0f1420; --card:#171e2e; --ink:#e8ecf5; --muted:#96a0b5; --line:#242d42;
+      --critical:#ff6b7a; --critical-bg:#3a1b21; --read:#e5a352; --read-bg:#33270f;
+      --ignore:#8b95ac; --ignore-bg:#1f2637; --accent:#7ea2ff; --accent-bg:#1c2742;
+      --money:#4cc596; --money-bg:#12301f; --high:#ff6b7a; --med:#e5a352; --low:#4cc596;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 22px rgba(0,0,0,.35);
+    }
   }
   *{box-sizing:border-box; margin:0; padding:0;}
+  html{scroll-behavior:smooth;}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-       background:var(--bg); color:var(--ink); line-height:1.5;}
-  .wrap{max-width:880px; margin:0 auto; padding:20px 16px 80px;}
-  header h1{font-size:1.9rem; letter-spacing:-.02em;}
-  header .tag{color:var(--muted); margin:4px 0 18px; font-size:1rem;}
+       background:var(--bg); color:var(--ink); line-height:1.55; -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:880px; margin:0 auto; padding:22px 16px 90px;}
+
+  header{margin-bottom:20px;}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .logo{width:42px; height:42px; border-radius:12px; background:linear-gradient(135deg,var(--accent),#7b48d8);
+        color:#fff; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:1.3rem;}
+  header h1{font-size:1.75rem; letter-spacing:-.02em;}
+  header .tag{color:var(--muted); margin-top:6px; font-size:.98rem; max-width:60ch;}
 
   .card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
-        padding:18px; margin-bottom:16px;}
-  .card h2{font-size:1.05rem; margin-bottom:10px;}
+        padding:18px; margin-bottom:14px; box-shadow:var(--shadow);}
+  .card h2{font-size:1.02rem; margin-bottom:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
   .step-num{display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;
-            border-radius:50%; background:var(--accent); color:#fff; font-size:.8rem; margin-right:8px;}
+            border-radius:50%; background:var(--accent); color:#fff; font-size:.8rem; flex:none;}
+  .sub{color:var(--muted); font-size:.88rem;}
 
-  /* Upload zone */
-  #dropzone{border:2px dashed #b9c2d4; border-radius:var(--radius); padding:26px 16px; text-align:center;
+  #dropzone{border:2px dashed #b6c0d6; border-radius:12px; padding:26px 16px; text-align:center;
             cursor:pointer; transition:background .15s,border-color .15s;}
+  @media (prefers-color-scheme: dark){ #dropzone{border-color:#3a4560;} }
   #dropzone.drag{background:var(--accent-bg); border-color:var(--accent);}
   #dropzone p{color:var(--muted); font-size:.92rem;}
-  #dropzone .big{color:var(--ink); font-size:1rem; font-weight:600; margin-bottom:4px;}
-  .alt-row{display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;}
-  button{font:inherit; cursor:pointer; border-radius:9px; border:1px solid var(--line);
-         background:#fff; padding:9px 14px;}
-  button.primary{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600;}
+  #dropzone .big{color:var(--ink); font-size:1rem; font-weight:650; margin-bottom:4px;}
+  .alt-row{display:flex; gap:10px; margin-top:12px; flex-wrap:wrap; align-items:center;}
+  button{font:inherit; cursor:pointer; border-radius:10px; border:1px solid var(--line);
+         background:var(--card); color:var(--ink); padding:9px 14px;}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:650;}
   button.linkish{border:none; background:none; color:var(--accent); text-decoration:underline; padding:6px 2px;}
   button:disabled{opacity:.45; cursor:not-allowed;}
+  select{font:inherit; padding:8px 10px; border-radius:10px; border:1px solid var(--line);
+         background:var(--card); color:var(--ink);}
   #pasteBox{display:none; margin-top:12px;}
-  #pasteBox textarea{width:100%; min-height:140px; border:1px solid var(--line); border-radius:9px;
-                     padding:10px; font:inherit; font-size:.9rem;}
+  #pasteBox textarea{width:100%; min-height:140px; border:1px solid var(--line); border-radius:10px;
+                     padding:10px; font:inherit; font-size:.9rem; background:var(--bg); color:var(--ink);}
 
-  /* Role picker — DR-02: exactly 8 roles */
   .roles{display:flex; flex-wrap:wrap; gap:8px;}
-  .role-chip{border:1.5px solid var(--line); border-radius:999px; padding:8px 16px; background:#fff;
+  .role-chip{border:1.5px solid var(--line); border-radius:999px; padding:8px 16px;
              font-size:.95rem; transition:all .12s;}
-  .role-chip[aria-pressed="true"]{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600;}
+  .role-chip[aria-pressed="true"]{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:650;}
   .role-hint{color:var(--muted); font-size:.85rem; margin-top:8px;}
   .attention{animation:pulse 1s ease 2; border-color:var(--critical) !important;}
-  @keyframes pulse{0%,100%{box-shadow:none}50%{box-shadow:0 0 0 4px var(--critical-bg)}}
+  @keyframes pulse{0%,100%{box-shadow:var(--shadow)}50%{box-shadow:0 0 0 4px var(--critical-bg)}}
 
-  /* Status / errors */
-  #status{display:none; margin-bottom:16px;}
+  #status{display:none; margin-bottom:14px;}
   .notice{border-left:4px solid var(--accent); background:var(--accent-bg); padding:12px 14px;
-          border-radius:0 9px 9px 0; font-size:.92rem;}
+          border-radius:0 10px 10px 0; font-size:.92rem;}
   .notice.warn{border-color:var(--read); background:var(--read-bg);}
   .notice.error{border-color:var(--critical); background:var(--critical-bg);}
   .notice b{display:block; margin-bottom:2px;}
@@ -63,52 +81,77 @@
            vertical-align:-2px; margin-right:8px;}
   @keyframes spin{to{transform:rotate(360deg)}}
 
-  /* Results */
   #results{display:none;}
-  #summaryBar{position:sticky; top:0; z-index:5; background:var(--card); border:1px solid var(--line);
-              border-radius:var(--radius); padding:10px 14px; margin-bottom:16px;
-              display:flex; align-items:center; gap:10px; flex-wrap:wrap; box-shadow:0 2px 10px rgba(20,30,60,.06);}
+  /* Verdict card — DR-23 */
+  #verdictCard .vhead{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;}
+  .badge{border-radius:999px; padding:5px 14px; font-weight:750; font-size:.88rem; color:#fff;}
+  .badge.low{background:var(--low);} .badge.med{background:var(--med);} .badge.high{background:var(--high);}
+  .doctype{font-size:.85rem; color:var(--muted); border:1px solid var(--line); border-radius:8px; padding:3px 9px;}
+  .bottomline{font-size:1.02rem; margin-bottom:6px;}
+  .readload{font-size:.85rem; color:var(--muted); margin-bottom:4px;}
+  #aiSummary{display:none; margin-top:10px; background:var(--accent-bg); border-radius:10px;
+             padding:10px 12px; font-size:.95rem;}
+  .vsec{margin-top:14px;}
+  .vsec h3{font-size:.85rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:8px;}
+  .flag{display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-top:1px solid var(--line);}
+  .flag .sev{flex:none; width:10px; height:10px; border-radius:50%; margin-top:6px;}
+  .flag .sev.s2{background:var(--high);} .flag .sev.s1{background:var(--med);}
+  .flag .fl{font-weight:650; font-size:.92rem;}
+  .flag .fa{font-size:.85rem; color:var(--muted);}
+  .flag .page{margin-left:auto;}
+  .datechips{display:flex; gap:6px; flex-wrap:wrap;}
+  .datechip{background:var(--ignore-bg); border-radius:8px; padding:3px 10px; font-size:.85rem;}
+
+  #summaryBar{position:sticky; top:8px; z-index:6; background:var(--card); border:1px solid var(--line);
+              border-radius:var(--radius); padding:10px 14px; margin-bottom:10px;
+              display:flex; align-items:center; gap:10px; flex-wrap:wrap; box-shadow:var(--shadow);}
   #summaryBar .counts{display:flex; gap:8px; flex-wrap:wrap; font-size:.85rem;}
-  .pill{border-radius:999px; padding:3px 10px; font-weight:600;}
+  .pill{border-radius:999px; padding:3px 10px; font-weight:650;}
   .pill.c{background:var(--critical-bg); color:var(--critical);}
   .pill.r{background:var(--read-bg); color:var(--read);}
   .pill.i{background:var(--ignore-bg); color:var(--ignore);}
-  #summaryBar select{font:inherit; padding:6px 8px; border-radius:8px; border:1px solid var(--line); margin-left:auto;}
+  #summaryBar select{margin-left:auto;}
   .docname{font-size:.85rem; color:var(--muted); width:100%;}
 
+  .tabbar{display:flex; gap:6px; overflow-x:auto; padding:2px 2px 10px; -webkit-overflow-scrolling:touch;}
+  .tab{flex:none; border:1px solid var(--line); border-radius:999px; padding:7px 14px; font-size:.88rem;
+       background:var(--card); color:var(--muted); white-space:nowrap;}
+  .tab.active{background:var(--ink); border-color:var(--ink); color:var(--bg); font-weight:650;}
+
   section.bucket{margin-bottom:22px;}
-  section.bucket>h2{font-size:1.15rem; margin-bottom:4px; display:flex; align-items:center; gap:8px;}
-  section.bucket>p.sub{color:var(--muted); font-size:.88rem; margin-bottom:10px;}
+  section.bucket>h2{font-size:1.12rem; margin-bottom:4px; display:flex; align-items:center; gap:8px;}
+  section.bucket>p.sub{margin-bottom:10px;}
   .dot{width:10px; height:10px; border-radius:50%; display:inline-block;}
   .dot.c{background:var(--critical);} .dot.r{background:var(--read);} .dot.i{background:var(--ignore);}
   .dot.f{background:var(--money);} .dot.a{background:var(--accent);}
 
   .clause{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
-          padding:14px 16px; margin-bottom:10px;}
+          padding:14px 16px; margin-bottom:10px; box-shadow:var(--shadow);}
   .clause.c{border-left:4px solid var(--critical);}
   .clause.r{border-left:4px solid var(--read);}
-  .clause.i{border-left:4px solid var(--ignore); opacity:.85;}
+  .clause.i{border-left:4px solid var(--ignore); opacity:.88;}
   .clause .top{display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:6px;}
-  .chip{font-size:.72rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+  .chip{font-size:.7rem; font-weight:750; letter-spacing:.05em; text-transform:uppercase;
         border-radius:6px; padding:2px 8px;}
   .chip.c{background:var(--critical-bg); color:var(--critical);}
   .chip.r{background:var(--read-bg); color:var(--read);}
   .chip.i{background:var(--ignore-bg); color:var(--ignore);}
   .chip.f{background:var(--money-bg); color:var(--money);}
   .chip.a{background:var(--accent-bg); color:var(--accent);}
-  .cat{font-size:.8rem; color:var(--muted); border:1px solid var(--line); border-radius:6px; padding:1px 7px;}
+  .cat{font-size:.78rem; color:var(--muted); border:1px solid var(--line); border-radius:6px; padding:1px 7px;}
   .page{margin-left:auto; font-size:.78rem; color:var(--muted); white-space:nowrap;}
-  .why{font-size:.88rem; color:var(--ink); margin-bottom:6px; font-weight:600;}
+  .why{font-size:.9rem; margin-bottom:6px; font-weight:650;}
   .excerpt{font-size:.88rem; color:var(--muted); white-space:pre-wrap;}
   .excerpt .more{color:var(--accent); cursor:pointer; text-decoration:underline; font-size:.82rem;}
-  .ainote{margin-top:8px; font-size:.88rem; background:var(--accent-bg); border-radius:8px;
-          padding:8px 10px;}
-  .ainote .chip{vertical-align:1px; margin-right:4px;}
   .amounts{margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;}
   .amt{background:var(--money-bg); color:var(--money); font-weight:700; border-radius:6px;
        padding:2px 8px; font-size:.85rem;}
+  .askline{margin-top:8px; font-size:.86rem; background:var(--read-bg); color:var(--ink);
+           border-radius:8px; padding:7px 10px;}
+  .askline b{color:var(--read);}
+  .ainote{margin-top:8px; font-size:.88rem; background:var(--accent-bg); border-radius:8px; padding:8px 10px;}
+  .ainote .chip{vertical-align:1px; margin-right:4px;}
 
-  /* Action checklist */
   .todo{display:flex; gap:10px; align-items:flex-start; background:var(--card); border:1px solid var(--line);
         border-radius:var(--radius); padding:12px 14px; margin-bottom:8px;}
   .todo input{margin-top:4px; width:16px; height:16px; accent-color:var(--accent);}
@@ -118,30 +161,42 @@
   .todo.done label{text-decoration:line-through; color:var(--muted);}
 
   details.fold{margin-bottom:22px;}
-  details.fold>summary{cursor:pointer; font-size:1.05rem; font-weight:600; padding:10px 0;
+  details.fold>summary{cursor:pointer; font-size:1.05rem; font-weight:650; padding:10px 0;
                        display:flex; align-items:center; gap:8px; list-style:none;}
   details.fold>summary::before{content:"▸"; transition:transform .15s;}
   details.fold[open]>summary::before{transform:rotate(90deg);}
   details.fold>summary .count{color:var(--muted); font-weight:400; font-size:.85rem;}
 
+  /* Ask the document */
+  #askLog{margin-top:10px;}
+  .q{font-weight:650; margin-top:10px;}
+  .a{background:var(--accent-bg); border-radius:10px; padding:9px 12px; margin-top:5px; font-size:.92rem;}
+  .askrow{display:flex; gap:8px; margin-top:4px;}
+  .askrow input{flex:1; border:1px solid var(--line); border-radius:10px; padding:9px 12px;
+                font:inherit; background:var(--bg); color:var(--ink); min-width:0;}
+
   .empty{color:var(--muted); font-size:.9rem; padding:8px 2px; font-style:italic;}
   .disclaimer{font-size:.82rem; color:var(--muted); background:var(--ignore-bg);
-              border-radius:9px; padding:10px 14px; margin:8px 0 18px;}
+              border-radius:10px; padding:10px 14px; margin:8px 0 14px;}
   footer{margin-top:30px; border-top:1px solid var(--line); padding-top:14px;}
   #startOver{margin-bottom:14px;}
+  #aiProg{display:none; margin-top:10px;}
+  .progtrack{height:8px; background:var(--ignore-bg); border-radius:99px; overflow:hidden;}
+  #aiProgBar{height:100%; width:0%; background:var(--accent); transition:width .3s;}
   @media (max-width:700px){ /* DR-15 */
-    .wrap{padding:14px 10px 60px;}
-    header h1{font-size:1.5rem;}
+    .wrap{padding:14px 10px 70px;}
+    header h1{font-size:1.45rem;}
     #summaryBar select{margin-left:0; width:100%;}
     .page{width:100%; margin-left:0;}
+    .flag .page{width:auto;}
   }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>What Matters?</h1>
-    <p class="tag">Upload a contract, lease, offer, or terms document. Pick who you are. See only what can affect <em>your</em> decision.</p>
+    <div class="brand"><div class="logo">?</div><h1>What Matters?</h1></div>
+    <p class="tag">Upload a contract, lease, offer, or terms document. Pick who you are. Get the verdict: what's critical, the red flags, the money, and what you can skip.</p>
   </header>
 
   <!-- STEP 1: document -->
@@ -149,7 +204,7 @@
     <h2><span class="step-num">1</span>Add your document</h2>
     <div id="dropzone" role="button" tabindex="0" aria-label="Upload a PDF">
       <p class="big">Drop a PDF here or tap to choose</p>
-      <p>Works with text PDFs (contracts, leases, offers, terms &amp; conditions)</p>
+      <p>Contracts, leases, offers, terms &amp; conditions, policies — analyzed on your device, never uploaded</p>
     </div>
     <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden>
     <div class="alt-row">
@@ -166,7 +221,7 @@
   <div class="card" id="roleCard">
     <h2><span class="step-num">2</span>Who are you in this document?</h2>
     <div class="roles" id="rolePicker"></div>
-    <p class="role-hint">Your role decides what is critical, what to read, and what you can safely skip. You can switch roles later without re-uploading.</p>
+    <p class="role-hint">Your role decides what is critical, what to read, and what you can safely skip. Switch roles anytime without re-uploading.</p>
   </div>
 
   <div id="status"></div>
@@ -175,28 +230,59 @@
   <div id="results">
     <button id="startOver">← Analyze another document</button>
     <div class="disclaimer" id="topDisclaimer"></div> <!-- DR-14 -->
-    <!-- DR-20: on-device AI boost -->
+
+    <!-- DR-23 verdict -->
+    <div class="card" id="verdictCard">
+      <div class="vhead">
+        <span class="badge" id="cautionBadge"></span>
+        <span class="doctype" id="docType"></span>
+        <span class="doctype" id="roleTag"></span>
+      </div>
+      <p class="bottomline" id="bottomLine"></p>
+      <p class="readload" id="readLoad"></p>
+      <div id="aiSummary"><span class="chip a">on-device AI · bottom line</span> <span id="aiSummaryText"></span></div>
+      <div class="vsec" id="flagsWrap"><h3>Red flags</h3><div id="redflagList"></div></div>
+      <div class="vsec" id="datesWrap"><h3>Key dates found</h3><div class="datechips" id="dateChips"></div></div>
+    </div>
+
+    <!-- DR-20/DR-23: on-device AI -->
     <div class="card" id="aiCard" style="display:none">
       <h2>On-device AI boost <span class="chip a">free · private</span></h2>
-      <p class="sub" style="color:var(--muted);font-size:.88rem;margin-bottom:10px">
+      <p class="sub" style="margin-bottom:10px">
         Runs a small AI model inside your browser — nothing is uploaded anywhere. One-time download
-        (~350&nbsp;MB — use Wi-Fi, then it's cached for offline use). It classifies clauses the rules engine
-        missed and adds plain-language notes to your critical clauses. Takes a minute or two on a phone.</p>
-      <div class="alt-row"><button class="primary" id="aiBtn">Enable AI boost</button></div>
-      <div id="aiProg" style="display:none;margin-top:10px">
-        <div style="height:8px;background:var(--ignore-bg);border-radius:99px;overflow:hidden">
-          <div id="aiProgBar" style="height:100%;width:0%;background:var(--accent);transition:width .3s"></div>
-        </div>
+        (use Wi-Fi; cached afterwards, works offline). It writes a bottom-line summary, classifies clauses the
+        rules engine missed, adds plain-language notes to critical clauses, and lets you ask questions below.</p>
+      <div class="alt-row">
+        <select id="aiModel" aria-label="AI model">
+          <option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC">Fast model (~350 MB)</option>
+          <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Better model (~880 MB)</option>
+        </select>
+        <button class="primary" id="aiBtn">Enable AI boost</button>
+      </div>
+      <div id="aiProg">
+        <div class="progtrack"><div id="aiProgBar"></div></div>
         <p class="role-hint" id="aiProgText">Preparing…</p>
       </div>
       <p class="role-hint" id="aiStatus"></p>
+      <div id="askCard" style="display:none">
+        <h2 style="margin-top:14px">Ask this document</h2>
+        <div class="askrow">
+          <input id="askInput" type="text" placeholder="e.g. Can I get the booking fee back?" enterkeyhint="send">
+          <button class="primary" id="askBtn">Ask</button>
+        </div>
+        <p class="role-hint">Answers come only from your document, on your device — and can be wrong.</p>
+        <div id="askLog"></div>
+      </div>
     </div>
+
     <div id="summaryBar">
       <span class="docname" id="docName"></span>
       <span class="counts" id="countPills"></span>
-      <select id="roleSwitch" aria-label="Switch role"></select> <!-- DR-13 instant re-filter -->
+      <select id="roleSwitch" aria-label="Switch role"></select> <!-- DR-13 -->
     </div>
-    <div id="langBanner"></div> <!-- DR-11 -->
+    <div id="langBanner"></div> <!-- DR-11 / DR-21 -->
+
+    <div class="tabbar" id="tabBar"></div> <!-- DR-23 -->
 
     <section class="bucket" id="sec-critical">
       <h2><span class="dot c"></span>Critical for you</h2>
@@ -212,7 +298,7 @@
 
     <section class="bucket" id="sec-action"> <!-- DR-08 -->
       <h2><span class="dot a"></span>Action required</h2>
-      <p class="sub">Obligations and deadlines. Tick them off as you handle them (list is not saved after you close the page).</p>
+      <p class="sub">Obligations and deadlines. Tick them off as you handle them (not saved after you close the page).</p>
       <div id="list-action"></div>
     </section>
 
@@ -229,7 +315,7 @@
 
     <details class="fold" id="fold-ignore">
       <summary><span class="dot i"></span>&nbsp;Can ignore <span class="count" id="count-ignore"></span></summary>
-      <p class="sub">Boilerplate or clauses that concern the other side, not you.</p>
+      <p class="sub">Boilerplate, specs, or clauses that concern the other side, not you.</p>
       <div id="list-ignore"></div>
     </details>
   </div>
@@ -239,6 +325,7 @@
 
 <script>
 "use strict";
+
 /* ================================ ENGINE ================================ */
 
 /* DR-02: the 8 roles */
@@ -592,25 +679,96 @@ const DEMO_TEXT = `RESIDENTIAL LEASE AGREEMENT — 14 OAK STREET
 
 13. SEVERABILITY AND ENTIRE AGREEMENT. If any provision is held invalid, the remainder continues in effect. This document is the entire agreement; headings are for convenience only and this lease may be signed in counterparts.`;
 
+
 /* ================================ UI ==================================== */
 const $ = id => document.getElementById(id);
-let state = {clauses:[], role:null, docName:"", pasted:false,
+let state = {clauses:[], role:null, docName:"", pasted:false, isBrochure:false,
              ai:{engine:null, notes:{}}};
 
-/* ============================ DR-20: AI BOOST =========================== */
-const AI_MODEL = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
+function esc(s){const d=document.createElement("div"); d.textContent=s; return d.innerHTML;}
+function setStatus(html){ const el=$("status"); el.style.display = html?"block":"none"; el.innerHTML = html||""; }
+
+/* ====================== DR-23: RED FLAGS / DATES / ASKS ================= */
+const RED_FLAGS = [
+ {re:/at (?:its|our|his|her|their) sole discretion|sole discretion/i, sev:2,
+  label:"One side decides alone", advice:"“Sole discretion” means no objective standard — ask for criteria or notice."},
+ {re:/non[- ]?refundable|no refunds?\b/i, sev:2,
+  label:"Non-refundable money", advice:"Ask exactly when money IS returned, and get it in writing."},
+ {re:/automatic(?:ally)? renew\w*|renews? automatically|evergreen/i, sev:2,
+  label:"Auto-renewal", advice:"Find the cancellation deadline and put it in your calendar now."},
+ {re:/class action waiver|waive .{0,25}(?:class|jury)|jury trial/i, sev:2,
+  label:"You waive class-action / jury rights", advice:"Disputes go to individual arbitration — know this before signing."},
+ {re:/reserves? the right to (?:change|modify|amend)|may (?:change|modify|amend) .{0,25}(?:terms|price|fees?|rent)|from time to time (?:modify|amend|change)/i, sev:2,
+  label:"They can change the terms later", advice:"Check what notice you get and whether you can exit when terms change."},
+ {re:/indemnif(?:y|ies|ication)|hold (?:\w+\s+)?harmless/i, sev:1,
+  label:"You may cover their legal costs", advice:"Check whether the indemnity is mutual or one-way."},
+ {re:/aggregate liability|liability .{0,25}(?:limited|capped|shall not exceed)|in no event .{0,20}liable/i, sev:1,
+  label:"Their payout is capped", advice:"Compare the cap with what you could actually lose."},
+ {re:/as[- ]is\b|disclaims? (?:all )?warrant/i, sev:1,
+  label:"No warranty (“as is”)", advice:"If it breaks, that's on you — inspect before committing."},
+ {re:/late (?:fee|charge)|interest on overdue|liquidated damages/i, sev:1,
+  label:"Late penalties", advice:"Know the exact cost of paying late — fee plus interest adds up."},
+ {re:/early termination fee|lease[- ]?break|minimum (?:term|commitment)|kill fee|cancellation fee/i, sev:1,
+  label:"Exit costs money", advice:"Price your way out before you sign your way in."},
+ {re:/subject to (?:production|availability|supply|change)|may vary|without prior notice/i, sev:1,
+  label:"Numbers and dates can move", advice:"“Estimated” promises aren't commitments — get firm ones in writing."},
+ {re:/waives? (?:any |all )?(?:claims?|rights?)|assumption of risk|at (?:your|their) own risk/i, sev:1,
+  label:"You waive rights / assume risk", advice:"Understand exactly which claims you're giving up."}
+];
+const DATE_RE = /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.? \d{1,2}(?:st|nd|rd|th)?,? \d{4}\b|\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.? \d{4}\b|\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/g;
+const CATEGORY_ASKS = {
+  deposit:"Get the refund conditions and timeline in writing before paying.",
+  renewal:"Put the cancellation deadline in your calendar today.",
+  notice:"Note every notice window — missing one can lock you in.",
+  penalty:"Ask if the penalty can be reduced or waived for first offenses.",
+  liability:"Ask what happens if your real loss exceeds their cap.",
+  indemnity:"Ask for the indemnity to be mutual, or capped.",
+  warranty:"Ask what IS warranted, for how long, and who to contact.",
+  estimates:"Ask which numbers are commitments and which are estimates.",
+  changes:"Ask what notice you get before changes, and whether you can exit.",
+  disputes:"Check where you'd have to bring a dispute — and what it costs.",
+  billing:"Check the exact charge date and how to cancel before it.",
+  covenants:"Ask to narrow the scope: duration, region, and what counts as competing.",
+  exclusions:"List what is NOT covered and decide if you need extra cover.",
+  claims:"Save the claims deadlines somewhere you'll see them.",
+  termination:"Work out your cheapest legal way out before signing.",
+  prepayment:"Ask what paying early actually costs."
+};
+
+function computeFlags(){
+  const out=[];
+  for(const f of RED_FLAGS){
+    const hits = state.clauses.filter(c=>f.re.test(c.text));
+    if(hits.length) out.push({f, count:hits.length, page:hits[0].page});
+  }
+  out.sort((a,b)=>b.f.sev-a.f.sev);
+  return out;
+}
+function computeDates(){
+  const seen=new Map();
+  for(const c of state.clauses){
+    for(const m of c.text.match(DATE_RE)||[]){
+      if(!seen.has(m)) seen.set(m, c.page);
+    }
+  }
+  return [...seen.entries()].slice(0,8);
+}
+
+/* ============================ DR-20/23: AI ============================== */
 const AI_LIB_URL = "https://esm.run/@mlc-ai/web-llm";
 const CLS_SYS = "You label contract clauses. Reply with exactly one id from this list, or the word none: " +
   CATEGORIES.map(c=>c.id).join(", ") + ". Reply with the id only, no other words.";
 const NOTE_SYS = roleLabel => "In one sentence of at most 25 plain words, tell the " + roleLabel +
   " the practical consequence of this clause for them. Use your own words — do not repeat, quote, or copy the document's phrasing. No legal advice, no hedging.";
+const SUM_SYS = roleLabel => "You are summarizing a document for the " + roleLabel +
+  ". In at most 60 plain words, give the bottom line: what they are committing to, the biggest financial exposure, and the one thing to check before signing. Use your own words.";
+const ASK_SYS = "Answer the user's question using ONLY these excerpts from their document. If the excerpts don't contain the answer, say you can't find it in the document. At most 80 plain words.";
 
 async function aiSupported(){
   if(window.__wmMockAI) return true;
   if(!navigator.gpu) return false;
   try{ return !!(await navigator.gpu.requestAdapter()); }catch(e){ return false; }
 }
-
 async function setupAICard(){
   $("aiCard").style.display = "block";
   const ok = await aiSupported();
@@ -619,18 +777,17 @@ async function setupAICard(){
     $("aiStatus").textContent = "This browser can't run on-device AI (needs WebGPU — Safari on iOS 26+ or a recent desktop browser). The rules engine below works everywhere.";
   }
 }
-
 async function getAIEngine(){
   if(state.ai.engine) return state.ai.engine;
   const lib = window.__wmMockAI || await import(AI_LIB_URL);
-  const engine = await lib.CreateMLCEngine(AI_MODEL, {initProgressCallback: p=>{
+  const engine = await lib.CreateMLCEngine($("aiModel").value, {initProgressCallback: p=>{
     $("aiProgBar").style.width = Math.round((p.progress||0)*100)+"%";
     $("aiProgText").textContent = p.text || "Downloading model…";
   }});
   state.ai.engine = engine;
+  $("aiModel").disabled = true; // switching models needs a page reload
   return engine;
 }
-
 async function aiAsk(engine, sys, user, maxTokens){
   const r = await engine.chat.completions.create({
     messages:[{role:"system",content:sys},{role:"user",content:user}],
@@ -645,7 +802,17 @@ async function runBoost(){
     $("aiProg").style.display = "block";
     const engine = await getAIEngine();
     $("aiProg").style.display = "none";
-    // Task A (DR-20): classify unclassified clauses — category id only, validated
+    const roleLabel = state.role ? ROLES.find(r=>r.id===state.role).label : "reader";
+    // Task 0 (DR-23): bottom-line summary from critical excerpts + stats
+    $("aiStatus").textContent = "AI writing the bottom line…";
+    const critTexts = state.clauses.filter(c=>state.role && tierFor(c,state.role).tier==="C")
+      .slice(0,6).map(c=>c.text.slice(0,300)).join("\n---\n") || state.clauses.slice(0,6).map(c=>c.text.slice(0,300)).join("\n---\n");
+    const sum = await aiAsk(engine, SUM_SYS(roleLabel), critTexts.slice(0,2200), 120);
+    if(sum && sum.length>=20 && sum.length<=600){
+      $("aiSummaryText").textContent = sum;
+      $("aiSummary").style.display = "block";
+    }
+    // Task A (DR-20): classify unclassified clauses — validated, additive only
     const un = state.clauses.filter(c=>c.cats.length===0).slice(0,20);
     let done=0, applied=0;
     for(const c of un){
@@ -653,21 +820,19 @@ async function runBoost(){
       const raw = await aiAsk(engine, CLS_SYS, c.text.slice(0,900), 8);
       const id = raw.toLowerCase().replace(/[^a-z]/g,"");
       const cat = CATEGORIES.find(x=>x.id===id);
-      if(cat){ c.cats=[cat]; c.aiClassified=true; applied++; } // invalid answers rejected: stays unclassified
+      if(cat){ c.cats=[cat]; c.aiClassified=true; applied++; }
     }
-    // Task B (DR-20): plain-language notes for the current role's critical clauses
+    // Task B (DR-20): notes for the current role's critical clauses
     let notes=0;
     if(state.role){
-      const roleLabel = ROLES.find(r=>r.id===state.role).label;
       const crits = state.clauses.filter(c=>tierFor(c,state.role).tier==="C").slice(0,8);
       state.ai.notes[state.role] = state.ai.notes[state.role] || {};
       let n=0;
       for(const c of crits){
         $("aiStatus").textContent = `AI writing notes ${++n}/${crits.length}…`;
         const t = await aiAsk(engine, NOTE_SYS(roleLabel), c.text.slice(0,900), 60);
-        // DR-21 echo guard: reject notes that just repeat the document
         const norm = s => s.toLowerCase().replace(/\s+/g," ").trim();
-        if(t && t.length<=220 && t.length>=15 && !norm(c.text).includes(norm(t))){
+        if(t && t.length<=220 && t.length>=15 && !norm(c.text).includes(norm(t))){ // DR-21 echo guard
           state.ai.notes[state.role][c.idx]=t; notes++;
         }
       }
@@ -675,6 +840,7 @@ async function runBoost(){
     $("aiStatus").textContent = `AI boost done — ${applied} clause${applied===1?"":"s"} newly classified, ${notes} note${notes===1?"":"s"} added. On-device AI can be wrong — treat notes as hints.`;
     btn.textContent = "Re-run AI boost";
     btn.disabled = false;
+    $("askCard").style.display = "block"; // DR-23: Q&A unlocked
     render();
   }catch(err){
     $("aiProg").style.display = "none";
@@ -683,14 +849,53 @@ async function runBoost(){
   }
 }
 
-function esc(s){const d=document.createElement("div"); d.textContent=s; return d.innerHTML;}
+/* DR-23: grounded Q&A — keyword retrieval over clauses */
+function retrieve(question, k){
+  const qw = new Set(question.toLowerCase().match(/[a-z]{4,}/g)||[]);
+  return state.clauses
+    .map(c=>{
+      const cw = c.text.toLowerCase().match(/[a-z]{4,}/g)||[];
+      let s=0; for(const w of cw) if(qw.has(w)) s++;
+      return {c, s};
+    })
+    .filter(x=>x.s>0).sort((a,b)=>b.s-a.s).slice(0,k).map(x=>x.c);
+}
+async function runAsk(){
+  const q = $("askInput").value.trim();
+  if(!q) return;
+  if(!state.ai.engine){ $("aiStatus").textContent = "Enable the AI boost first, then ask away."; return; }
+  const log = $("askLog");
+  log.insertAdjacentHTML("beforeend", `<div class="q">${esc(q)}</div><div class="a" id="askPending"><span class="spinner"></span>Reading your document…</div>`);
+  $("askInput").value=""; $("askBtn").disabled = true;
+  try{
+    const ctx = retrieve(q, 4).map(c=>`[${pageRef(c)}] `+c.text.slice(0,400)).join("\n---\n")
+      || "(no matching excerpts found)";
+    const ans = await aiAsk(state.ai.engine, ASK_SYS, "EXCERPTS:\n"+ctx+"\n\nQUESTION: "+q, 120);
+    $("askPending").outerHTML = `<div class="a">${esc(ans||"I can't find that in the document.")}</div>`;
+  }catch(err){
+    $("askPending").outerHTML = `<div class="a">AI error: ${esc(err.message||"unknown")}. Try again.</div>`;
+  }
+  $("askBtn").disabled = false;
+}
 
-function setStatus(html){ const el=$("status"); el.style.display = html?"block":"none"; el.innerHTML = html||""; }
+/* ============================ TABS (DR-23) ============================== */
+const TABS = [["all","All"],["critical","Critical"],["financial","Money"],["action","Actions"],["read","Read"],["ignore","Ignore"]];
+const TAB_SECTIONS = {critical:"sec-critical", financial:"sec-financial", action:"sec-action", read:"sec-read", ignore:"fold-ignore"};
+let activeTab = "all";
+function showTab(t){
+  activeTab = t;
+  document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active", b.dataset.tab===t));
+  for(const [key, secId] of Object.entries(TAB_SECTIONS)){
+    const el = $(secId);
+    el.style.display = (t==="all" || t===key) ? "" : "none";
+  }
+  if(t==="ignore") $("fold-ignore").open = true;
+}
 
+/* ============================ FLOW ====================================== */
 function init(){
-  $("topDisclaimer").textContent = DISCLAIMER;   // DR-14 shown above results
-  $("footDisclaimer").textContent = DISCLAIMER;  // DR-14 shown in footer
-  // role chips
+  $("topDisclaimer").textContent = DISCLAIMER;   // DR-14
+  $("footDisclaimer").textContent = DISCLAIMER;  // DR-14
   const rp = $("rolePicker");
   ROLES.forEach(r=>{
     const b=document.createElement("button");
@@ -703,7 +908,10 @@ function init(){
   rs.innerHTML = ROLES.map(r=>`<option value="${r.id}">I am the ${r.label}</option>`).join("");
   rs.onchange = ()=>selectRole(rs.value);
 
-  // upload interactions
+  const tb=$("tabBar");
+  tb.innerHTML = TABS.map(([k,l])=>`<button class="tab${k==="all"?" active":""}" data-tab="${k}">${l}</button>`).join("");
+  tb.querySelectorAll(".tab").forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
+
   const dz=$("dropzone"), fi=$("fileInput");
   dz.onclick = ()=>fi.click();
   dz.onkeydown = e=>{ if(e.key==="Enter"||e.key===" ") fi.click(); };
@@ -722,7 +930,9 @@ function init(){
     analyze([{num:null,text:t}], "Pasted text", true);
   };
   $("demoBtn").onclick = ()=>analyze([{num:null,text:DEMO_TEXT}], "Demo: Residential Lease — 14 Oak Street", true);
-  $("aiBtn").onclick = runBoost; // DR-20
+  $("aiBtn").onclick = runBoost;   // DR-20
+  $("askBtn").onclick = runAsk;    // DR-23
+  $("askInput").onkeydown = e=>{ if(e.key==="Enter") runAsk(); };
   $("startOver").onclick = ()=>{ $("results").style.display="none";
     $("uploadCard").style.display="block"; $("roleCard").style.display="block";
     setStatus(""); window.scrollTo({top:0}); };
@@ -732,7 +942,7 @@ function selectRole(id){
   state.role = id; syncChips();
   $("roleSwitch").value = id;
   if(state.clauses.length) render();
-  // DR-20: AI notes are role-specific — tell the user how to get them for this role
+  // DR-20: AI notes are role-specific
   if(state.ai.engine && state.role && !(state.ai.notes[state.role] && Object.keys(state.ai.notes[state.role]).length)){
     $("aiStatus").textContent = "AI notes are written per role — tap \"Re-run AI boost\" to get notes for the " +
       ROLES.find(r=>r.id===state.role).label + ".";
@@ -762,8 +972,7 @@ async function handleFile(file){
     for(let p=1; p<=doc.numPages; p++){
       const page = await doc.getPage(p);
       const tc = await page.getTextContent();
-      // DR-09a: rebuild lines from y-positions; a vertical gap > 1.6× the median
-      // line gap is a paragraph break (blank line), otherwise a single newline.
+      // DR-09a: rebuild lines from y-positions; gap > 1.6× median = paragraph break
       const lines=[]; let cur={y:null, text:""};
       for(const item of tc.items){
         if(!item.str.trim() && !item.hasEOL) continue;
@@ -782,6 +991,17 @@ async function handleFile(file){
       });
       pages.push({num:p, text});
     }
+    // DR-23: strip repeated page headers/footers (same short line on ≥3 pages)
+    if(pages.length>=3){
+      const freq = new Map();
+      for(const pg of pages){
+        for(const ln of new Set(pg.text.split("\n").map(s=>s.trim()).filter(s=>s && s.length<60)))
+          freq.set(ln, (freq.get(ln)||0)+1);
+      }
+      const junk = new Set([...freq.entries()].filter(([ln,n])=>n>=3).map(([ln])=>ln));
+      if(junk.size) for(const pg of pages)
+        pg.text = pg.text.split("\n").filter(s=>!junk.has(s.trim())).join("\n");
+    }
     const total = pages.map(p=>p.text).join("").replace(/\s+/g," ").trim();
     if(total.length < 200){ // DR-10
       setStatus(`<div class="notice warn"><b>This PDF appears to be scanned images — no readable text.</b>Two ways forward: use your phone's text recognition (iPhone Live Text or Google Lens) to copy the text from the pages, then use "paste text instead" below the upload box — or ask the sender for the original (non-scanned) PDF.</div>`);
@@ -794,20 +1014,21 @@ async function handleFile(file){
 }
 
 function analyze(pages, name, pasted){
-  const clauses = segment(pages).map(classify); // DR-09 then DR-04/07/08
+  const clauses = segment(pages).map(classify); // DR-09 → DR-04/07/08
   if(clauses.length===0){
     setStatus(`<div class="notice warn"><b>No readable clauses found.</b>The document may be empty — try pasting its text instead.</div>`);
     return;
   }
   state.clauses = clauses; state.docName = name; state.pasted = pasted;
-  state.ai.notes = {}; // DR-20: notes are per-document; keep the loaded engine
+  state.ai.notes = {}; // DR-20: per-document
   $("aiStatus").textContent = ""; $("aiBtn").textContent = "Enable AI boost";
+  $("aiSummary").style.display = "none"; $("askLog").innerHTML = ""; $("askCard").style.display = state.ai.engine ? "block":"none";
   const full = pages.map(p=>p.text).join("\n");
-  let banners = looksNonEnglish(full) // DR-11: warn, don't block
+  let banners = looksNonEnglish(full) // DR-11
     ? `<div class="notice warn" style="margin-bottom:16px"><b>This looks like a non-English document.</b>Version 1 only reads English — the results below are unreliable.</div>` : "";
-  // DR-21: brochure / price-sheet detection — almost no obligation language
   const obligMarkers = (full.match(/\b(shall|hereby|agrees?|liable|undertakes?)\b/gi)||[]).length;
-  if(obligMarkers < 3){
+  state.isBrochure = obligMarkers < 3; // DR-21
+  if(state.isBrochure){
     banners += `<div class="notice" style="margin-bottom:16px"><b>This looks like a brochure or price sheet, not a contract.</b>Nothing in it legally binds anyone. Use it for the numbers — prices, fees, dates, warranty periods — and note that "estimated" and "subject to availability" mean exactly that. Before paying anything, ask for the actual booking or purchase agreement and run it through here too.</div>`;
   }
   $("langBanner").innerHTML = banners;
@@ -815,9 +1036,9 @@ function analyze(pages, name, pasted){
   $("uploadCard").style.display="none";
   $("results").style.display="block";
   setupAICard(); // DR-20
+  showTab("all");
   $("docName").textContent = name + " · " + clauses.length + " clauses";
   if(!state.role){
-    // hurried-user path: no role picked yet — keep role card visible and demand it
     $("roleCard").scrollIntoView({behavior:"smooth"});
     $("roleCard").classList.add("attention");
     setTimeout(()=>$("roleCard").classList.remove("attention"), 2500);
@@ -825,7 +1046,7 @@ function analyze(pages, name, pasted){
   render();
 }
 
-function pageRef(c){ return c.page ? "p. "+c.page : "—"; } // DR-09 paste mode
+function pageRef(c){ return c.page ? "p. "+c.page : "—"; } // DR-09
 
 function clauseCard(c, tier, primary){
   const tags = c.cats.map(cat=>`<span class="cat">${esc(cat.label)}</span>`).join("") +
@@ -842,11 +1063,41 @@ function clauseCard(c, tier, primary){
             : `<div class="why">The engine couldn't categorize this — skim it yourself.</div>`; // DR-03
   const amounts = c.amounts.length && c.isFinancial
     ? `<div class="amounts">${c.amounts.map(a=>`<span class="amt">${esc(a)}</span>`).join("")}</div>` : "";
-  const cls = tier==="U" ? "r" : (tier ? tier.toLowerCase() : "");
+  const ask = (tier==="C" && primary && CATEGORY_ASKS[primary.id])
+    ? `<div class="askline"><b>Before signing:</b> ${esc(CATEGORY_ASKS[primary.id])}</div>` : ""; // DR-23
   const noteHtml = aiNote ? `<div class="ainote"><span class="chip a">on-device AI</span> ${esc(aiNote)}</div>` : "";
+  const cls = tier==="U" ? "r" : (tier ? tier.toLowerCase() : "");
   return `<div class="clause ${cls}" data-clause="${c.idx}">
     <div class="top">${tierChip}${flags}${tags}<span class="page">${pageRef(c)}</span></div>
-    ${why}<div class="excerpt" data-full="${esc(c.text)}">${short}</div>${amounts}${noteHtml}</div>`;
+    ${why}<div class="excerpt" data-full="${esc(c.text)}">${short}</div>${amounts}${ask}${noteHtml}</div>`;
+}
+
+/* DR-23: verdict card */
+function buildVerdict(counts, finCount, actCount){
+  const flags = computeFlags();
+  const pts = flags.reduce((s,x)=>s+x.f.sev,0);
+  const level = pts>=6 ? ["high","High"] : pts>=3 ? ["med","Medium"] : ["low","Low"];
+  const badge = $("cautionBadge");
+  badge.className = "badge "+level[0];
+  badge.textContent = "Heads-up level: "+level[1];
+  $("docType").textContent = state.isBrochure ? "Brochure / price sheet" : "Contract-style document";
+  $("roleTag").textContent = state.role ? "for you as the "+ROLES.find(r=>r.id===state.role).label : "pick your role above";
+  const top = flags.length ? ` Biggest flag: ${flags[0].f.label.toLowerCase()}.` : "";
+  $("bottomLine").textContent = state.role
+    ? `${state.clauses.length} clauses — ${counts.C} critical for you, ${finCount} with money attached, ${actCount} needing action, ${flags.length} red flag${flags.length===1?"":"s"}.${top}${state.isBrochure?" Nothing here binds anyone — verify the numbers in the real agreement.":""}`
+    : `${state.clauses.length} clauses, ${flags.length} red flag${flags.length===1?"":"s"} detected. Pick your role to see what's critical for you.`;
+  if(state.role){
+    const critWords = state.clauses.filter(c=>tierFor(c,state.role).tier==="C")
+      .reduce((s,c)=>s+c.text.split(/\s+/).length,0);
+    const allWords = state.clauses.reduce((s,c)=>s+c.text.split(/\s+/).length,0);
+    $("readLoad").textContent = `Reading just your critical clauses ≈ ${Math.max(1,Math.round(critWords/200))} min, instead of ≈ ${Math.max(1,Math.round(allWords/200))} min for the whole document.`;
+  } else $("readLoad").textContent = "";
+  $("redflagList").innerHTML = flags.map(x=>
+    `<div class="flag"><span class="sev s${x.f.sev}"></span><div><div class="fl">${esc(x.f.label)}${x.count>1?` <span class="sub">×${x.count}</span>`:""}</div><div class="fa">${esc(x.f.advice)}</div></div><span class="page">${x.page?"p. "+x.page:"—"}</span></div>`).join("");
+  $("flagsWrap").style.display = flags.length ? "" : "none";
+  const dates = computeDates();
+  $("dateChips").innerHTML = dates.map(([d,pg])=>`<span class="datechip">${esc(d)}${pg?` · p.${pg}`:""}</span>`).join("");
+  $("datesWrap").style.display = dates.length ? "" : "none";
 }
 
 function render(){
@@ -862,8 +1113,9 @@ function render(){
     if(c.isAction) actions.push({c,tier,primary});
   }
 
+  buildVerdict(counts, financial.length, actions.length); // DR-23
+
   if(!role){
-    // no role selected: show only a prompt in results (DR-13 flow: role drives everything)
     ["critical","read","ignore","unclassified"].forEach(k=>$("list-"+k).innerHTML="");
     $("list-critical").innerHTML =
       `<div class="notice"><b>Pick your role in step 2 above.</b>Critical / read / ignore depends entirely on which side of this document you are.</div>`;
@@ -871,13 +1123,12 @@ function render(){
     $("list-financial").innerHTML = financial.length
       ? financial.map(f=>clauseCard(f.c,null,f.c.cats[0]||null)).join("")
       : `<p class="empty">No amounts, fees, or percentages detected.</p>`;
-    // DR-08a: without a role, only deadline items are actionable
-    $("list-action").innerHTML = renderActions(actions.filter(a=>a.c.deadlineText));
+    $("list-action").innerHTML = renderActions(actions.filter(a=>a.c.deadlineText)); // DR-08a
     wireExpanders();
     return;
   }
 
-  /* DR-19: coverage transparency — unclassified is shown, never buried */
+  /* DR-19: coverage transparency */
   $("countPills").innerHTML =
     `<span class="pill c">${counts.C} critical</span>
      <span class="pill r">${counts.R} to read</span>
@@ -887,28 +1138,31 @@ function render(){
   $("list-critical").innerHTML = buckets.C.length
     ? buckets.C.map(b=>clauseCard(b.c,b.tier,b.primary)).join("")
     : `<p class="empty">Nothing critical detected for your role — still skim "Must read".</p>`;
-
   $("list-read").innerHTML = buckets.R.length
     ? buckets.R.map(b=>clauseCard(b.c,b.tier,b.primary)).join("")
     : `<p class="empty">Nothing beyond the critical items.</p>`;
-
   $("list-unclassified").innerHTML = buckets.U.map(b=>clauseCard(b.c,"U",null)).join("");
   $("count-unclassified").textContent = `(${counts.U})`;
-  $("fold-unclassified").style.display = counts.U ? "block":"none";
-
+  $("fold-unclassified").style.display = counts.U ? "" : "none";
   $("list-ignore").innerHTML = buckets.I.length
     ? buckets.I.map(b=>clauseCard(b.c,b.tier,b.primary)).join("")
     : `<p class="empty">Nothing safely ignorable — short document.</p>`;
   $("count-ignore").textContent = `(${counts.I})`;
-
   $("list-financial").innerHTML = financial.length
-    ? financial.map(f=>clauseCard(f.c, role?tierFor(f.c,role).tier:"R", f.primary||f.c.cats[0]||null)).join("")
+    ? financial.map(f=>clauseCard(f.c, tierFor(f.c,role).tier, f.primary||f.c.cats[0]||null)).join("")
     : `<p class="empty">No amounts, fees, or percentages detected.</p>`;
-
-  // DR-08a: only obligations relevant to this role (tier C/R/U), deadlines first
+  // DR-08a: role-relevant obligations, deadlines first
   const relevant = actions.filter(a=>a.tier!=="I")
     .sort((x,y)=>(y.c.deadlineText?1:0)-(x.c.deadlineText?1:0));
   $("list-action").innerHTML = renderActions(relevant);
+
+  // DR-23: tab counts
+  const tabCounts = {critical:counts.C, financial:financial.length, action:relevant.length,
+                     read:counts.R+counts.U, ignore:counts.I};
+  document.querySelectorAll(".tab").forEach(b=>{
+    const k=b.dataset.tab;
+    b.textContent = (TABS.find(t=>t[0]===k)||[])[1] + (k!=="all" && tabCounts[k]!=null ? ` ${tabCounts[k]}` : "");
+  });
   wireExpanders();
 }
 
@@ -916,7 +1170,7 @@ function renderActions(actions){
   if(!actions.length) return `<p class="empty">No explicit obligations or deadlines detected.</p>`;
   return actions.map((a,i)=>{
     let excerpt = esc(a.c.text.slice(0,220)) + (a.c.text.length>220?"…":"");
-    if(a.c.deadlineText){ // DR-08: bold the deadline text
+    if(a.c.deadlineText){ // DR-08: bold the deadline
       const dl = esc(a.c.deadlineText);
       excerpt = excerpt.split(dl).join(`<b>${dl}</b>`);
     }
@@ -933,6 +1187,7 @@ function wireExpanders(){
 }
 
 init();
+
 </script>
 </body>
 </html>
