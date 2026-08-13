@@ -183,7 +183,9 @@
   #aiProg{display:none; margin-top:10px;}
   .progtrack{height:8px; background:var(--ignore-bg); border-radius:99px; overflow:hidden;}
   #aiProgBar{height:100%; width:0%; background:var(--accent); transition:width .3s;}
+  #aiModel{max-width:100%;}
   @media (max-width:700px){ /* DR-15 */
+    #aiModel,#aiBtn{width:100%;}
     .wrap{padding:14px 10px 70px;}
     header h1{font-size:1.45rem;}
     #summaryBar select{margin-left:0; width:100%;}
@@ -253,9 +255,11 @@
         (use Wi-Fi; cached afterwards, works offline). It writes a bottom-line summary, classifies clauses the
         rules engine missed, adds plain-language notes to critical clauses, and lets you ask questions below.</p>
       <div class="alt-row">
-        <select id="aiModel" aria-label="AI model">
-          <option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC">Fast model (~350 MB)</option>
-          <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Better model (~880 MB)</option>
+        <select id="aiModel" aria-label="AI model"> <!-- DR-24: verified WebLLM prebuilt ids -->
+          <option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC">Lite — oldest phones (~350 MB, basic answers)</option>
+          <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC" selected>Balanced — recommended (~700 MB)</option>
+          <option value="Qwen2.5-1.5B-Instruct-q4f16_1-MLC">Strong — recent iPhones (~1 GB)</option>
+          <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC">Best — desktop / Pro phones (~1.7 GB)</option>
         </select>
         <button class="primary" id="aiBtn">Enable AI boost</button>
       </div>
@@ -762,7 +766,7 @@ const NOTE_SYS = roleLabel => "In one sentence of at most 25 plain words, tell t
   " the practical consequence of this clause for them. Use your own words — do not repeat, quote, or copy the document's phrasing. No legal advice, no hedging.";
 const SUM_SYS = roleLabel => "You are summarizing a document for the " + roleLabel +
   ". In at most 60 plain words, give the bottom line: what they are committing to, the biggest financial exposure, and the one thing to check before signing. Use your own words.";
-const ASK_SYS = "Answer the user's question using ONLY these excerpts from their document. If the excerpts don't contain the answer, say you can't find it in the document. At most 80 plain words.";
+const ASK_SYS = "Answer the user's question using ONLY these excerpts from their document. Quote exact amounts, dates and deadlines from the excerpts when relevant. If the excerpts don't contain the answer, say you can't find it in the document. At most 80 plain words.";
 
 async function aiSupported(){
   if(window.__wmMockAI) return true;
@@ -841,6 +845,8 @@ async function runBoost(){
     btn.textContent = "Re-run AI boost";
     btn.disabled = false;
     $("askCard").style.display = "block"; // DR-23: Q&A unlocked
+    if($("aiModel").value.includes("0.5B")) // DR-24: honest expectation for the Lite tier
+      $("aiStatus").textContent += " Tip: the Lite model is basic — the Balanced or Strong model answers questions much better.";
     render();
   }catch(err){
     $("aiProg").style.display = "none";
@@ -849,16 +855,40 @@ async function runBoost(){
   }
 }
 
-/* DR-23: grounded Q&A — keyword retrieval over clauses */
+/* DR-24: grounded Q&A retrieval v2 — stemming, idf weighting, number & money-intent boosts */
+const STOP = new Set(("the and for are but not you your can will with this that have from what when how who get its any "+
+  "all out was were they them then than there here does did been being into upon shall must may per our their his her "+
+  "one two also only same such more most very just about which would could should").split(" "));
+function stem(w){
+  w = w.replace(/ies$/,"y").replace(/(ability|able|ments?|tions?|ings?|ed|es|s)$/,"");
+  if(w.length>5) w = w.replace(/y$/,"");
+  return w;
+}
+function tokensOf(text){
+  return new Set((text.toLowerCase().match(/[a-z]{3,}/g)||[]).filter(w=>!STOP.has(w)).map(stem));
+}
 function retrieve(question, k){
-  const qw = new Set(question.toLowerCase().match(/[a-z]{4,}/g)||[]);
-  return state.clauses
-    .map(c=>{
-      const cw = c.text.toLowerCase().match(/[a-z]{4,}/g)||[];
-      let s=0; for(const w of cw) if(qw.has(w)) s++;
-      return {c, s};
-    })
-    .filter(x=>x.s>0).sort((a,b)=>b.s-a.s).slice(0,k).map(x=>x.c);
+  const qTokens = tokensOf(question);
+  const qNums = question.match(/\d[\d.,]*/g)||[];
+  const moneyIntent = /\b(fee|fees|cost|costs|price|pay|paid|refund\w*|deposit|charge\w*|money|much|expensive|owe)\b/i.test(question);
+  const N = state.clauses.length;
+  const df = new Map(); // document frequency per stem
+  const clauseTokens = state.clauses.map(c=>{
+    const t = tokensOf(c.text);
+    for(const w of t) df.set(w, (df.get(w)||0)+1);
+    return t;
+  });
+  const scored = state.clauses.map((c,i)=>{
+    let s = 0;
+    for(const w of qTokens) if(clauseTokens[i].has(w)) s += Math.log(1 + N/(df.get(w)||1));
+    for(const n of qNums) if(c.text.includes(n)) s += 3;
+    if(moneyIntent && c.isFinancial) s += 2;
+    return {c, s};
+  }).filter(x=>x.s>0).sort((a,b)=>b.s-a.s);
+  if(scored.length) return scored.slice(0,k).map(x=>x.c);
+  // fallback (DR-24): never hand the model an empty context
+  const crit = state.role ? state.clauses.filter(c=>tierFor(c,state.role).tier==="C") : [];
+  return (crit.length?crit:state.clauses).slice(0,4);
 }
 async function runAsk(){
   const q = $("askInput").value.trim();
@@ -868,8 +898,7 @@ async function runAsk(){
   log.insertAdjacentHTML("beforeend", `<div class="q">${esc(q)}</div><div class="a" id="askPending"><span class="spinner"></span>Reading your document…</div>`);
   $("askInput").value=""; $("askBtn").disabled = true;
   try{
-    const ctx = retrieve(q, 4).map(c=>`[${pageRef(c)}] `+c.text.slice(0,400)).join("\n---\n")
-      || "(no matching excerpts found)";
+    const ctx = retrieve(q, 6).map(c=>`[${pageRef(c)}] `+c.text.slice(0,450)).join("\n---\n"); // DR-24
     const ans = await aiAsk(state.ai.engine, ASK_SYS, "EXCERPTS:\n"+ctx+"\n\nQUESTION: "+q, 120);
     $("askPending").outerHTML = `<div class="a">${esc(ans||"I can't find that in the document.")}</div>`;
   }catch(err){
