@@ -151,6 +151,9 @@
   .askline b{color:var(--read);}
   .ainote{margin-top:8px; font-size:.88rem; background:var(--accent-bg); border-radius:8px; padding:8px 10px;}
   .ainote .chip{vertical-align:1px; margin-right:4px;}
+  .actrow{margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;}
+  button.mini{font-size:.8rem; padding:5px 12px; border-radius:8px; color:var(--accent);
+              border:1px solid var(--accent-bg); background:var(--accent-bg); font-weight:650;}
 
   .todo{display:flex; gap:10px; align-items:flex-start; background:var(--card); border:1px solid var(--line);
         border-radius:var(--radius); padding:12px 14px; margin-bottom:8px;}
@@ -264,7 +267,8 @@
       <p class="sub" style="margin-bottom:10px">
         Runs a small AI model inside your browser — nothing is uploaded anywhere. One-time download
         (use Wi-Fi; cached afterwards, works offline). It writes a bottom-line summary, classifies clauses the
-        rules engine missed, adds plain-language notes to critical clauses, and lets you ask questions below.</p>
+        rules engine missed, double-checks your critical clauses, and unlocks per-clause <b>Explain</b> and
+        <b>Draft the ask</b> buttons plus the question box below.</p>
       <div class="alt-row">
         <select id="aiModel" aria-label="AI model"> <!-- DR-24: verified WebLLM prebuilt ids -->
           <option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC">Lite — oldest phones (~350 MB, basic answers)</option>
@@ -704,7 +708,7 @@ const DEMO_TEXT = `RESIDENTIAL LEASE AGREEMENT — 14 OAK STREET
 /* ================================ UI ==================================== */
 const $ = id => document.getElementById(id);
 let state = {clauses:[], role:null, docName:"", pasted:false, isBrochure:false,
-             ai:{engine:null, notes:{}}};
+             ai:{engine:null, notes:{}, drafts:{}}};
 
 function esc(s){const d=document.createElement("div"); d.textContent=s; return d.innerHTML;}
 function setStatus(html){ const el=$("status"); el.style.display = html?"block":"none"; el.innerHTML = html||""; }
@@ -779,8 +783,12 @@ function computeDates(){
 const AI_LIB_URL = "https://esm.run/@mlc-ai/web-llm";
 const CLS_SYS = "You label contract clauses. Reply with exactly one id from this list, or the word none: " +
   CATEGORIES.map(c=>c.id).join(", ") + ". Reply with the id only, no other words.";
-const NOTE_SYS = roleLabel => "In one sentence of at most 25 plain words, tell the " + roleLabel +
-  " the practical consequence of this clause for them. Use your own words — do not repeat, quote, or copy the document's phrasing. No legal advice, no hedging.";
+/* DR-29: user-directed language tasks — the model's real strengths */
+const EXPLAIN_SYS = roleLabel => "Explain this clause to the " + roleLabel +
+  " in plain everyday language, at most 2 short sentences, focused on what it means for them practically. Use your own words — do not repeat, quote, or copy the document's phrasing. No legal advice, no hedging.";
+const DRAFT_SYS = (roleLabel, ask) => "Write a short, polite, firm message (3-4 sentences) from the " + roleLabel +
+  " to the other party about this clause. The goal: " + ask +
+  " Reference the clause naturally. No placeholders, no subject line, no signature.";
 const SUM_SYS = roleLabel => "You are summarizing a document for the " + roleLabel +
   ". In at most 60 plain words, give the bottom line: what they are committing to, the biggest financial exposure, and the one thing to check before signing. Use your own words.";
 const ASK_SYS = "Answer the user's question using ONLY these excerpts from their document. The MOST RELEVANT LINES are the best evidence — prefer them. Quote exact amounts, dates and deadlines. If the excerpts don't contain the answer, say you can't find it in the document. If the question asks for an opinion or recommendation (like 'which is best'), say the document doesn't make one and state only what it lists. At most 80 plain words.";
@@ -843,22 +851,19 @@ async function runBoost(){
       const cat = CATEGORIES.find(x=>x.id===id);
       if(cat){ c.cats=[cat]; c.aiClassified=true; applied++; }
     }
-    // Task B (DR-20): notes for the current role's critical clauses
-    let notes=0;
+    // Task C (DR-29): semantic double-check of critical clauses — ADDITIVE only
+    let checked=0, added=0;
     if(state.role){
-      const crits = state.clauses.filter(c=>tierFor(c,state.role).tier==="C").slice(0,8);
-      state.ai.notes[state.role] = state.ai.notes[state.role] || {};
-      let n=0;
+      const crits = state.clauses.filter(c=>tierFor(c,state.role).tier==="C").slice(0,10);
       for(const c of crits){
-        $("aiStatus").textContent = `AI writing notes ${++n}/${crits.length}…`;
-        const t = await aiAsk(engine, NOTE_SYS(roleLabel), c.text.slice(0,900), 60);
-        const norm = s => s.toLowerCase().replace(/\s+/g," ").trim();
-        if(t && t.length<=220 && t.length>=15 && !norm(c.text).includes(norm(t))){ // DR-21 echo guard
-          state.ai.notes[state.role][c.idx]=t; notes++;
-        }
+        $("aiStatus").textContent = `AI double-checking critical clauses ${++checked}/${crits.length}…`;
+        const raw = await aiAsk(engine, CLS_SYS, c.text.slice(0,900), 8);
+        const id = raw.toLowerCase().replace(/[^a-z]/g,"");
+        const cat = CATEGORIES.find(x=>x.id===id);
+        if(cat && !c.cats.some(x=>x.id===cat.id)){ c.cats.push(cat); c.aiTagged=true; added++; }
       }
     }
-    $("aiStatus").textContent = `AI boost done — ${applied} clause${applied===1?"":"s"} newly classified, ${notes} note${notes===1?"":"s"} added. On-device AI can be wrong — treat notes as hints.`;
+    $("aiStatus").textContent = `AI boost done — ${applied} clause${applied===1?"":"s"} newly classified, ${checked} double-checked${added?`, ${added} extra tag${added===1?"":"s"} added`:""}. Now tap "Explain" on any clause, or "Draft the ask" on critical ones. On-device AI can be wrong — treat it as help, not facts.`;
     btn.textContent = "Re-run AI boost";
     btn.disabled = false;
     $("askCard").style.display = "block"; // DR-23: Q&A unlocked
@@ -870,6 +875,43 @@ async function runBoost(){
     $("aiStatus").textContent = "AI couldn't start ("+(err && err.message ? err.message : "error")+"). The rules-engine results below are unaffected.";
     btn.disabled = false;
   }
+}
+
+/* DR-29: on-demand Explain / Draft-the-ask */
+async function runExplain(idx){
+  const c = state.clauses.find(x=>x.idx===idx);
+  if(!c || !state.ai.engine || !state.role) return;
+  const roleLabel = ROLES.find(r=>r.id===state.role).label;
+  $("aiStatus").textContent = "AI explaining the clause…";
+  try{
+    const t = await aiAsk(state.ai.engine, EXPLAIN_SYS(roleLabel), c.text.slice(0,900), 80);
+    const norm = s => s.toLowerCase().replace(/\s+/g," ").trim();
+    if(t && t.length>=15 && t.length<=400 && !norm(c.text).includes(norm(t))){ // DR-21 echo guard
+      state.ai.notes[state.role] = state.ai.notes[state.role]||{};
+      state.ai.notes[state.role][idx] = t;
+      $("aiStatus").textContent = "";
+    } else {
+      $("aiStatus").textContent = "The AI couldn't produce a useful explanation for that clause (it just repeated it). The Strong or Best model does better.";
+    }
+  }catch(err){ $("aiStatus").textContent = "AI error: "+(err.message||"unknown"); }
+  render();
+}
+async function runDraft(idx){
+  const c = state.clauses.find(x=>x.idx===idx);
+  if(!c || !state.ai.engine || !state.role) return;
+  const roleLabel = ROLES.find(r=>r.id===state.role).label;
+  const primary = tierFor(c, state.role).primary;
+  const ask = (primary && CATEGORY_ASKS[primary.id]) || "clarify this clause in writing before signing.";
+  $("aiStatus").textContent = "AI drafting your message…";
+  try{
+    const t = await aiAsk(state.ai.engine, DRAFT_SYS(roleLabel, ask), c.text.slice(0,900), 140);
+    if(t && t.length>=30){
+      state.ai.drafts[state.role] = state.ai.drafts[state.role]||{};
+      state.ai.drafts[state.role][idx] = t;
+      $("aiStatus").textContent = "";
+    } else $("aiStatus").textContent = "The AI couldn't draft that — try the Strong or Best model.";
+  }catch(err){ $("aiStatus").textContent = "AI error: "+(err.message||"unknown"); }
+  render();
 }
 
 /* DR-24: grounded Q&A retrieval v2 — stemming, idf weighting, number & money-intent boosts */
@@ -1114,10 +1156,10 @@ function selectRole(id){
   state.role = id; syncChips();
   $("roleSwitch").value = id;
   if(state.clauses.length) render();
-  // DR-20: AI notes are role-specific
+  // DR-29: explanations and drafts are role-specific and on-demand
   if(state.ai.engine && state.role && !(state.ai.notes[state.role] && Object.keys(state.ai.notes[state.role]).length)){
-    $("aiStatus").textContent = "AI notes are written per role — tap \"Re-run AI boost\" to get notes for the " +
-      ROLES.find(r=>r.id===state.role).label + ".";
+    $("aiStatus").textContent = "Explanations are written per role — tap \"Explain\" on any clause to get the " +
+      ROLES.find(r=>r.id===state.role).label + "'s view.";
   }
 }
 function syncChips(){
@@ -1234,7 +1276,7 @@ function analyze(pages, name, pasted){
   state.clauses = clauses; state.docName = name; state.pasted = pasted;
   if(pasted){ state.docMarkdown = pages.map(p=>p.text).join("\n\n"); state.docCoverage = 1; } // DR-26
   renderDocView();
-  state.ai.notes = {}; // DR-20: per-document
+  state.ai.notes = {}; state.ai.drafts = {}; // DR-20: per-document
   $("aiStatus").textContent = ""; $("aiBtn").textContent = "Enable AI boost";
   $("aiSummary").style.display = "none"; $("askLog").innerHTML = ""; $("askCard").style.display = state.ai.engine ? "block":"none";
   const full = pages.map(p=>p.text).join("\n");
@@ -1279,11 +1321,18 @@ function clauseCard(c, tier, primary){
     ? `<div class="amounts">${c.amounts.map(a=>`<span class="amt">${esc(a)}</span>`).join("")}</div>` : "";
   const ask = (tier==="C" && primary && CATEGORY_ASKS[primary.id])
     ? `<div class="askline"><b>Before signing:</b> ${esc(CATEGORY_ASKS[primary.id])}</div>` : ""; // DR-23
-  const noteHtml = aiNote ? `<div class="ainote"><span class="chip a">on-device AI</span> ${esc(aiNote)}</div>` : "";
+  const noteHtml = aiNote ? `<div class="ainote"><span class="chip a">on-device AI explanation</span> ${esc(aiNote)}</div>` : "";
+  const draft = state.role && state.ai.drafts[state.role] && state.ai.drafts[state.role][c.idx];
+  const draftHtml = draft ? `<div class="ainote"><span class="chip a">draft message — copy &amp; adapt</span> ${esc(draft)}</div>` : "";
+  /* DR-29: user-directed AI actions */
+  const hasAI = !!state.ai.engine && !!state.role;
+  const actions = hasAI
+    ? `<div class="actrow">${!aiNote?`<button class="mini explainBtn" data-i="${c.idx}">Explain</button>`:""}${(tier==="C" && !draft)?`<button class="mini draftBtn" data-i="${c.idx}">Draft the ask</button>`:""}</div>`
+    : "";
   const cls = tier==="U" ? "r" : (tier ? tier.toLowerCase() : "");
   return `<div class="clause ${cls}" data-clause="${c.idx}">
     <div class="top">${tierChip}${flags}${tags}<span class="page">${pageRef(c)}</span></div>
-    ${why}<div class="excerpt" data-full="${esc(c.text)}">${short}</div>${amounts}${ask}${noteHtml}</div>`;
+    ${why}<div class="excerpt" data-full="${esc(c.text)}">${short}</div>${amounts}${ask}${noteHtml}${draftHtml}${actions}</div>`;
 }
 
 /* DR-23: verdict card */
@@ -1398,6 +1447,8 @@ function wireExpanders(){
   document.querySelectorAll(".excerpt .more").forEach(m=>{
     m.onclick = ()=>{ const ex=m.closest(".excerpt"); ex.innerHTML = ex.dataset.full; };
   });
+  document.querySelectorAll(".explainBtn").forEach(b=>b.onclick = ()=>runExplain(+b.dataset.i)); // DR-29
+  document.querySelectorAll(".draftBtn").forEach(b=>b.onclick = ()=>runDraft(+b.dataset.i));     // DR-29
 }
 
 init();
